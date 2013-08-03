@@ -19,7 +19,7 @@ setup(
     zip_safe   = False,
     packages = find_packages(exclude=('tests', 'tests.*')),
     include_package_data = True,
-    scripts = ['bin/norless'],
+    scripts = ['bin/norless', 'bin/check-nl-mail'],
     url = 'http://github.com/baverman/norless',
     classifiers = [
         "Programming Language :: Python",
