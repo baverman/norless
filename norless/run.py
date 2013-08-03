@@ -22,14 +22,15 @@ def get_maildir(maildir, cache):
 
     return result
 
-def get_state(config, account, cache):
+def get_state(config, sync, cache):
+    key = sync.account, sync.folder
     try:
-        return cache[account]
+        return cache[key]
     except KeyError:
         pass
 
-    result = cache[account] = db.open(
-        os.path.join(os.path.expanduser(config.state_dir), account + '.state'), 'c')
+    result = cache[key] = db.open(
+        os.path.join(os.path.expanduser(config.state_dir), '{}.{}'.format(*key)), 'c')
 
     return result
 
@@ -80,7 +81,7 @@ def sync(config):
     for s in config.sync_list:
         account = config.accounts[s.account] 
         maildir = get_maildir(s.maildir, maildir_cache)
-        state = get_state(config, s.account, state_cache)
+        state = get_state(config, s, state_cache)
         maxuid, changes = sync_local(maildir, state, account)
         folder = account.folders[s.folder]
 
