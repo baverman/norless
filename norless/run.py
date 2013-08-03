@@ -10,7 +10,6 @@ from collections import Counter
 from .config import IniConfig
 
 get_maildir_lock = threading.Lock()
-get_state_lock = threading.Lock()
 
 def get_maildir(maildir, cache):
     with get_maildir_lock:
@@ -27,18 +26,9 @@ def get_maildir(maildir, cache):
 
         return result
 
-def get_state(config, sync, cache):
-    with get_state_lock:
-        key = sync.account, sync.folder
-        try:
-            return cache[key]
-        except KeyError:
-            pass
-
-        result = cache[key] = db.open(
-            os.path.join(os.path.expanduser(config.state_dir), '{}.{}'.format(*key)), 'c')
-
-        return result
+def get_state(config, account, folder):
+    return db.open(os.path.join(os.path.expanduser(config.state_dir),
+        '{}.{}'.format(account, folder)), 'c')
 
 def store_message(maildir, state, uid, message, flags):
     msg = MaildirMessage(message)
@@ -59,7 +49,7 @@ def store_message(maildir, state, uid, message, flags):
         state[uid] = key + '\n' + msg.get_flags()
         state.sync()
 
-def sync_local(maildir, state, account):
+def sync_local(maildir, state):
     uid = state.firstkey()
     maxuid = 0
     changes = {'seen':[], 'trash':[]}
@@ -82,14 +72,15 @@ def sync_local(maildir, state, account):
 
     return maxuid, changes
 
-def sync_account(config, sync_list, maildir_cache, state_cache):
+def sync_account(config, sync_list, maildir_cache):
     for s in sync_list:
         account = config.accounts[s.account] 
         maildir = get_maildir(s.maildir, maildir_cache)
-        state = get_state(config, s, state_cache)
-        maxuid, changes = sync_local(maildir, state, account)
-        folder = account.folders[s.folder]
+        state = get_state(config, s.account, s.folder)
 
+        maxuid, changes = sync_local(maildir, state)
+
+        folder = account.folders[s.folder]
         folder.apply_changes(changes, state, s.trash)
 
         messages = folder.fetch(config.fetch_last, maxuid)
@@ -97,7 +88,6 @@ def sync_account(config, sync_list, maildir_cache, state_cache):
             store_message(maildir, state, m['uid'], m['body'], m['flags'])
 
 def sync(config):
-    state_cache = {}
     maildir_cache = {}
     accounts = {}
     for s in config.sync_list:
@@ -106,7 +96,7 @@ def sync(config):
     threads = []
     for sync_list in accounts.itervalues():
         t = threading.Thread(target=sync_account,
-            args=(config, sync_list, maildir_cache, state_cache))
+            args=(config, sync_list, maildir_cache))
 
         t.start()
         threads.append(t)
