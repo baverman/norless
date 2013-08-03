@@ -9,12 +9,13 @@ LIST_REGEX = re.compile(r'\((?P<flags>.*?)\) "(?P<sep>.*)" (?P<name>.*)')
 PARENS_REGEX = re.compile(r'\((.*?)\)')
 
 class ImapBox(object):
-    def __init__(self, host, username, password, port=None, ssl=True):
+    def __init__(self, host, username, password, port=None, ssl=True, debug=None):
         self.host = host
         self.port = port or (993 if ssl else 143)
         self.username = username
         self.password = password
         self.ssl = ssl
+        self.debug = debug
 
         self.selected_folder = None
 
@@ -22,7 +23,10 @@ class ImapBox(object):
     def client(self):
         C = imaplib.IMAP4_SSL if self.ssl else imaplib.IMAP4
         cl = C(self.host, self.port)
-        cl.debug = 4
+
+        if self.debug:
+            cl.debug = self.debug
+
         cl.login(self.username, self.password)
         return cl
 

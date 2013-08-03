@@ -1,11 +1,16 @@
+import re
 import ConfigParser
 
+from .imap import ImapBox
+
+SYNC_RE = re.compile('->')
+
 class Sync(object):
-    def __init__(self, account, folder, maildir, trash='Trash'):
+    def __init__(self, account, folder, maildir, trash=None):
         self.account = account
         self.folder = folder
         self.maildir = maildir
-        self.trash = trash
+        self.trash = trash or 'Trash'
 
 
 class Config(object):
@@ -18,10 +23,32 @@ class Config(object):
 
 
 class IniConfig(object):
-    def __init(self, fname):
-        self.config = ConfigParser.SafeConfigParser()
-        self.config.read(fname)
+    def __init__(self, fname):
+        self.accounts = {}
+        self.sync_list = []
 
-    @property
-    def accounts(self):
-        pass
+        config = ConfigParser.SafeConfigParser(
+            {'port': '0', 'fetch_last':50, 'ssl':'yes', 'trash': None})
+        config.read(fname)
+        self.parse(config)
+
+    def parse(self, config):
+        self.state_dir = config.get('norless', 'state_dir')
+        self.fetch_last = config.getint('norless', 'fetch_last')
+
+        for s in config.sections():
+            if s.startswith('account'):
+                _, account = s.split()[:2]
+
+                host = config.get(s, 'host')
+                port = config.getint(s, 'port')
+                user = config.get(s, 'user')
+                password = config.get(s, 'password')
+                ssl = config.getboolean(s, 'ssl')
+                self.accounts[account] = ImapBox(host, user, password, port, ssl)
+
+                trash = config.get(s, 'trash')
+                sync = config.get(s, 'sync')
+                for sp in sync.split('|'):
+                    folder, maildir = SYNC_RE.split(sp)
+                    self.sync_list.append(Sync(account, folder.strip(), maildir.strip()))

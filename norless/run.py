@@ -5,6 +5,9 @@ import argparse
 import gdbm as db
 
 from mailbox import Maildir, MaildirMessage
+from collections import Counter
+
+from .config import IniConfig
 
 def get_maildir(maildir, cache):
     try:
@@ -14,6 +17,8 @@ def get_maildir(maildir, cache):
 
     result = cache[maildir] = Maildir(
         os.path.expanduser(maildir), factory=None, create=True)
+
+    result.name = os.path.basename(maildir)
 
     return result
 
@@ -84,10 +89,36 @@ def sync(config):
         messages = folder.fetch(config.fetch_last, maxuid)
         for m in messages: 
             store_message(maildir, state, m['uid'], m['body'], m['flags'])
-    
+
+def check(config):
+    maildir_cache = {}
+    for s in config.sync_list:
+        get_maildir(s.maildir, maildir_cache)
+
+    result = Counter()
+    for maildir in maildir_cache.values():
+        for message in maildir:
+            if 'S' not in message.get_flags():
+                result[maildir.name] += 1
+
+    for k, v in result.iteritems():
+        print '{}\t{}'.format(k, v)
+
+    return result
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-C', '--config', dest='config')
+    parser.add_argument('-C', '--config', dest='config',
+        default=os.path.expanduser('~/.config/norlessrc'))
+
+    parser.add_argument('-c', '--check', dest='check', action='store_true')
     
     args = parser.parse_args()
+
+    config = IniConfig(args.config)
+
+    sync(config)
+    if args.check:
+        if not check(config):
+            sys.exit(1)
+
