@@ -119,8 +119,8 @@ class Folder(object):
             result = self.box.client.uid('fetch', '{}:*'.format(last_uid),
                 '(UID FLAGS BODY.PEEK[])')
         else:
-            start, end = self.total - n, self.total
-            result = self.box.fetch('{}:{}'.format(start, end), '(UID FLAGS BODY.PEEK[])')
+            start, end = self.total - last_n, self.total
+            result = self.box.client.fetch('{}:{}'.format(start, end), '(UID FLAGS BODY.PEEK[])')
 
         it = iter(result[1])
         for flags, msg in it:

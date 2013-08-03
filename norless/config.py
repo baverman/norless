@@ -28,7 +28,7 @@ class IniConfig(object):
         self.sync_list = []
 
         config = ConfigParser.SafeConfigParser(
-            {'port': '0', 'fetch_last':50, 'ssl':'yes', 'trash': None})
+            {'port': '0', 'fetch_last':50, 'ssl':'yes', 'trash': None, 'sync': None})
         config.read(fname)
         self.parse(config)
 
@@ -49,6 +49,8 @@ class IniConfig(object):
 
                 trash = config.get(s, 'trash')
                 sync = config.get(s, 'sync')
-                for sp in sync.split('|'):
-                    folder, maildir = SYNC_RE.split(sp)
-                    self.sync_list.append(Sync(account, folder.strip(), maildir.strip()))
+                if sync:
+                    for sp in sync.split('|'):
+                        folder, maildir = SYNC_RE.split(sp)
+                        self.sync_list.append(
+                            Sync(account, folder.strip(), maildir.strip()))

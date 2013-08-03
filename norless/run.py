@@ -106,19 +106,27 @@ def check(config):
 
     return result
 
+def show_folders(config):
+    for account, box in config.accounts.iteritems():
+        print '{}: {}'.format(account, list(box.folders))
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-C', '--config', dest='config',
         default=os.path.expanduser('~/.config/norlessrc'))
 
     parser.add_argument('-c', '--check', dest='check', action='store_true')
+    parser.add_argument('-s', '--show-folders', dest='show_folders', action='store_true')
     
     args = parser.parse_args()
 
     config = IniConfig(args.config)
 
-    sync(config)
-    if args.check:
-        if not check(config):
-            sys.exit(1)
+    if args.show_folders:
+        show_folders(config)
+    else:
+        sync(config)
+        if args.check:
+            if not check(config):
+                sys.exit(1)
 
