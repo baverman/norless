@@ -1,4 +1,5 @@
 import sys
+import json
 import os.path
 import argparse
 import threading
@@ -7,7 +8,7 @@ from mailbox import Maildir, MaildirMessage
 from collections import Counter
 
 from .config import IniConfig
-from .state import State, connect
+from .state import State, connect, create_tables
 
 get_maildir_lock = threading.Lock()
 
@@ -46,10 +47,48 @@ def get_maildir(maildir):
         result.name = os.path.basename(maildir)
         return result
 
-def store_message(maildir, state, uid, message, flags):
+def apply_remote_changes(maildir, state, changes, change_uid):
+    uids = changes['trash']
+    if uids:
+        for uid in uids:
+            s = state.get(uid)
+            if s and not s.is_check:
+                maildir.discard(s.msgkey)
+                state.remove(uid)
+
+    uids = changes['seen']
+    if uids:
+        for uid in uids:
+            s = state.get(uid)
+            print s
+            if s and not s.is_check:
+                try:
+                    msg = maildir[s.msgkey] 
+                except KeyError:
+                    state.remove(uid)
+                else:
+                    msg.add_flag('S')
+                    with maildir.store_lock:
+                        maildir[s.msgkey] = msg
+
+                    state.put(s.uid, s.msgkey, msg.get_flags())
+
+    state.put(change_uid, '', 'S', 1)
+
+def store_message(config, maildir, state, skip_checkpoints, uid, message, flags):
     uid = int(uid)
 
     msg = MaildirMessage(message)
+    if 'X-Norless' in msg:
+        replica_id = msg['X-Norless']
+        if skip_checkpoints or replica_id == config.replica_id:
+            state.put(uid, '', 'S', 1)
+            return
+        else:
+            changes = json.loads(msg.get_payload())
+            apply_remote_changes(maildir, state, changes, uid)
+            return
+
     if '\\Seen' in flags:
         msg.add_flag('S')
 
@@ -70,8 +109,11 @@ def sync_local(maildir, state):
     maxuid = 0
     changes = {'seen':[], 'trash':[]}
     for row in state.getall():  
-        flags = set(row.flags)
         maxuid = max(row.uid, maxuid)
+        if row.is_check:
+            continue
+
+        flags = set(row.flags)
 
         try:
             mflags = maildir.cm_get_flags(row.msgkey)
@@ -91,13 +133,15 @@ def sync_account(config, sync_list):
         state = State(conn, s.account, s.folder)
 
         maxuid, changes = sync_local(maildir, state)
+        skip_checkpoints = not maxuid
 
         folder = account.get_folder(s.folder)
-        folder.apply_changes(changes, state, s.trash)
+        folder.apply_changes(config, changes, state, s.trash)
 
         messages = folder.fetch(config.fetch_last, maxuid)
         for m in messages: 
-            store_message(maildir, state, m['uid'], m['body'], m['flags'])
+            store_message(config, maildir, state, skip_checkpoints,
+                m['uid'], m['body'], m['flags'])
 
 def sync(config):
     accounts = {}
@@ -144,6 +188,7 @@ def main():
     parser.add_argument('-c', '--check', dest='check', action='store_true')
     parser.add_argument('-s', '--show-folders', dest='show_folders', action='store_true')
     parser.add_argument('-a', '--account', dest='account')
+    parser.add_argument('--init-state', dest='init_state', action='store_true')
     
     args = parser.parse_args()
 
@@ -154,6 +199,10 @@ def main():
     if args.show_folders:
         show_folders(config)
     else:
+        if args.init_state:
+            with connect(config.state_db) as conn:
+                create_tables(conn)
+
         sync(config)
         if args.check:
             if not check(config):

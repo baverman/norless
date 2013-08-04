@@ -3,13 +3,14 @@ import json
 import time
 import imaplib
 
-from email import message_from_string
+from email.utils import formatdate
 from email.mime.text import MIMEText
 
 from .utils import cached_property
 
 LIST_REGEX = re.compile(r'\((?P<flags>.*?)\) "(?P<sep>.*)" (?P<name>.*)')
 PARENS_REGEX = re.compile(r'\((.*?)\)')
+SPARENS_REGEX = re.compile(r'\[(.*?)\]')
 
 class ImapBox(object):
     def __init__(self, host, username, password, port=None, ssl=True, debug=None):
@@ -85,7 +86,7 @@ class Folder(object):
     def select(self):
         self.box.select(self.name)
 
-    def apply_changes(self, changes, state, trash_folder):
+    def apply_changes(self, config, changes, state, trash_folder):
         trash = changes['trash']
         uids = ','.join(map(str, trash))
         if trash:
@@ -111,14 +112,14 @@ class Folder(object):
                     flags = ''.join(flags)
                     state.put(s.uid, s.msgkey, flags, s.is_check)
 
-        # print changes
-        # if changes['seen'] or changes['trash']:
-        #     msg = MIMEText(json.dumps(changes))
-        #     msg['From'] = 'norless@fake.org'
-        #     msg['To'] = 'norless@fake.org'
-        #     msg['Subject'] = 'norless checkpoint'
-        #     msg['X-Norless'] = 'norless'
-        #     print self.box.client.append(self.name, '(\\Seen)', time.time(), msg.as_string())
+        if changes['seen'] or changes['trash']:
+            msg = MIMEText(json.dumps(changes))
+            msg['Date'] = formatdate(None, True)
+            msg['From'] = 'norless@fake.org'
+            msg['To'] = 'norless@fake.org'
+            msg['Subject'] = 'norless checkpoint'
+            msg['X-Norless'] = config.replica_id
+            self.box.client.append(self.name, '(\\Seen)', time.time(), msg.as_string())
 
     def fetch(self, last_n=None, last_uid=None):
         self.select()

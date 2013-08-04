@@ -36,6 +36,7 @@ class IniConfig(object):
     def parse(self, config):
         self.state_db = config.get('norless', 'state_db')
         self.fetch_last = config.getint('norless', 'fetch_last')
+        self.replica_id = config.get('norless', 'replica_id')
 
         for s in config.sections():
             if s.startswith('account'):
