@@ -5,34 +5,53 @@ import imaplib
 
 from email.utils import formatdate
 from email.mime.text import MIMEText
+from hashlib import sha1
 
 from .utils import cached_property
 
 LIST_REGEX = re.compile(r'\((?P<flags>.*?)\) "(?P<sep>.*)" (?P<name>.*)')
 PARENS_REGEX = re.compile(r'\((.*?)\)')
-SPARENS_REGEX = re.compile(r'\[(.*?)\]')
 
 class ImapBox(object):
-    def __init__(self, host, username, password, port=None, ssl=True, debug=None):
+    def __init__(self, host, username, password, port=None, ssl=True,
+            fingerprint=None, debug=None):
         self.host = host
         self.port = port or (993 if ssl else 143)
         self.username = username
         self.password = password
         self.ssl = ssl
+        self.fingerprint = fingerprint
         self.debug = debug
 
         self.selected_folder = None
+
+    def get_fingerprint(self, client):
+        if not self.ssl:
+            return
+
+        return ':'.join(map(lambda r: r.encode('hex').upper(),
+            sha1(client.sslobj.getpeercert(True)).digest()))
 
     @cached_property
     def client(self):
         C = imaplib.IMAP4_SSL if self.ssl else imaplib.IMAP4
         cl = C(self.host, self.port)
 
+        if self.ssl and self.fingerprint:
+            server_fingerprint = self.get_fingerprint(cl)
+            if self.fingerprint != server_fingerprint:
+                raise Exception('Mismatched fingerprint for {} {}'.format(
+                    self.host, server_fingerprint))
+        
         if self.debug:
             cl.debug = self.debug
 
         cl.login(self.username, self.password)
         return cl
+
+    @cached_property
+    def server_fingerprint(self):
+        return self.get_fingerprint(self.client)
 
     def list_folders(self):
         result = []

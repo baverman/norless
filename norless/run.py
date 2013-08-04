@@ -180,6 +180,11 @@ def show_folders(config):
         for f, s, name in box.list_folders():
             print '  ', f, s, name
 
+def show_fingerprint(config):
+    for account, box in config.accounts.iteritems():
+        box.fingerprint = None
+        print account, box.server_fingerprint
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-C', '--config', dest='config',
@@ -189,6 +194,7 @@ def main():
     parser.add_argument('-s', '--show-folders', dest='show_folders', action='store_true')
     parser.add_argument('-a', '--account', dest='account')
     parser.add_argument('--init-state', dest='init_state', action='store_true')
+    parser.add_argument('--show-fingerprint', dest='show_fingerprint', action='store_true')
     
     args = parser.parse_args()
 
@@ -198,6 +204,8 @@ def main():
 
     if args.show_folders:
         show_folders(config)
+    elif args.show_fingerprint:
+        show_fingerprint(config)
     else:
         if args.init_state:
             with connect(config.state_db) as conn:

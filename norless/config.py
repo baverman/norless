@@ -29,7 +29,7 @@ class IniConfig(object):
 
         config = ConfigParser.SafeConfigParser(
             {'port': '0', 'fetch_last':50, 'ssl':'yes', 'trash': None,
-            'sync': None, 'debug': '0'})
+            'sync': None, 'debug': '0', 'fingerprint': None})
         config.read(fname)
         self.parse(config)
 
@@ -47,8 +47,10 @@ class IniConfig(object):
                 user = config.get(s, 'user')
                 password = config.get(s, 'password')
                 ssl = config.getboolean(s, 'ssl')
+                fingerprint = config.get(s, 'fingerprint')
                 debug = config.getint(s, 'debug')
-                self.accounts[account] = ImapBox(host, user, password, port, ssl, debug)
+                self.accounts[account] = ImapBox(host, user, password, port, ssl,
+                    fingerprint, debug)
 
                 trash = config.get(s, 'trash')
                 sync = config.get(s, 'sync')
