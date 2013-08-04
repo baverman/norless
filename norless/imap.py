@@ -1,7 +1,10 @@
 import re
-
+import json
+import time
 import imaplib
+
 from email import message_from_string
+from email.mime.text import MIMEText
 
 from .utils import cached_property
 
@@ -30,21 +33,19 @@ class ImapBox(object):
         cl.login(self.username, self.password)
         return cl
 
-    @cached_property
-    def folders(self):
-        folders = {}
+    def list_folders(self):
+        result = []
         resp = self.client.list()
         for item in resp[1]: 
             m = LIST_REGEX.search(item)
             flags, sep, name = m.group('flags', 'sep', 'name')
             name = name.strip('"')
+            result.append((flags, sep, name))
 
-            if r'\Noselect' in flags: continue
+        return result
 
-            title = name.rpartition(sep)[2]
-            folders[name] = Folder(self, name, title)
-
-        return folders
+    def get_folder(self, name):
+        return Folder(self, name)
 
     def get_status(self, folder):
         result = self.client.status(folder, '(MESSAGES UNSEEN)')
@@ -59,10 +60,9 @@ class ImapBox(object):
 
 
 class Folder(object):
-    def __init__(self, box, name, title):
+    def __init__(self, box, name):
         self.box = box
         self.name = name
-        self.title = title
 
         self._total = None
         self._new = None
@@ -111,15 +111,29 @@ class Folder(object):
 
             state.sync()
 
+        # print changes
+        # if changes['seen'] or changes['trash']:
+        #     msg = MIMEText(json.dumps(changes))
+        #     msg['From'] = 'norless@fake.org'
+        #     msg['To'] = 'norless@fake.org'
+        #     msg['Subject'] = 'norless checkpoint'
+        #     msg['X-Norless'] = 'norless'
+        #     print self.box.client.append(self.name, '(\\Seen)', time.time(), msg.as_string())
+
     def fetch(self, last_n=None, last_uid=None):
         self.select()
         result_messages = []
 
         if last_uid:
-            result = self.box.client.uid('fetch', '{}:*'.format(last_uid),
+            result = self.box.client.uid('search', '(UID {}:*)'.format(last_uid+1))
+            uids = [r for r in result[1] if int(r) > last_uid]
+            if not uids:
+                return []
+
+            result = self.box.client.uid('fetch', ','.join(uids),
                 '(UID FLAGS BODY.PEEK[])')
         else:
-            start, end = self.total - last_n, self.total
+            start, end = max(self.total - last_n, 1), self.total
             result = self.box.client.fetch('{}:{}'.format(start, end), '(UID FLAGS BODY.PEEK[])')
 
         it = iter(result[1])

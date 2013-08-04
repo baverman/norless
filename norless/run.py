@@ -80,7 +80,7 @@ def sync_account(config, sync_list, maildir_cache):
 
         maxuid, changes = sync_local(maildir, state)
 
-        folder = account.folders[s.folder]
+        folder = account.get_folder(s.folder)
         folder.apply_changes(changes, state, s.trash)
 
         messages = folder.fetch(config.fetch_last, maxuid)
@@ -122,7 +122,9 @@ def check(config):
 
 def show_folders(config):
     for account, box in config.accounts.iteritems():
-        print '{}: {}'.format(account, list(box.folders))
+        print account
+        for f, s, name in box.list_folders():
+            print '  ', f, s, name
 
 def main():
     parser = argparse.ArgumentParser()
@@ -131,10 +133,13 @@ def main():
 
     parser.add_argument('-c', '--check', dest='check', action='store_true')
     parser.add_argument('-s', '--show-folders', dest='show_folders', action='store_true')
+    parser.add_argument('-a', '--account', dest='account')
     
     args = parser.parse_args()
 
     config = IniConfig(args.config)
+    if args.account:
+        config.restrict_to(args.account)
 
     if args.show_folders:
         show_folders(config)

@@ -28,7 +28,8 @@ class IniConfig(object):
         self.sync_list = []
 
         config = ConfigParser.SafeConfigParser(
-            {'port': '0', 'fetch_last':50, 'ssl':'yes', 'trash': None, 'sync': None})
+            {'port': '0', 'fetch_last':50, 'ssl':'yes', 'trash': None,
+            'sync': None, 'debug': '0'})
         config.read(fname)
         self.parse(config)
 
@@ -45,7 +46,8 @@ class IniConfig(object):
                 user = config.get(s, 'user')
                 password = config.get(s, 'password')
                 ssl = config.getboolean(s, 'ssl')
-                self.accounts[account] = ImapBox(host, user, password, port, ssl)
+                debug = config.getint(s, 'debug')
+                self.accounts[account] = ImapBox(host, user, password, port, ssl, debug)
 
                 trash = config.get(s, 'trash')
                 sync = config.get(s, 'sync')
@@ -53,4 +55,8 @@ class IniConfig(object):
                     for sp in sync.split('|'):
                         folder, maildir = SYNC_RE.split(sp)
                         self.sync_list.append(
-                            Sync(account, folder.strip(), maildir.strip()))
+                            Sync(account, folder.strip(), maildir.strip(), trash))
+
+    def restrict_to(self, account):
+        self.accounts = {k: v for k, v in self.accounts.iteritems() if k == account}
+        self.sync_list = [r for r in self.sync_list if r.account == account]
