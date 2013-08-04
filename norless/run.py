@@ -1,5 +1,6 @@
 import sys
 import json
+import fcntl
 import os.path
 import argparse
 import threading
@@ -207,6 +208,15 @@ def main():
     elif args.show_fingerprint:
         show_fingerprint(config)
     else:
+        lock_file = os.path.join(
+            os.path.dirname(os.path.expanduser(config.state_db)), '.norless-lock')
+        fp = open(lock_file, 'w')
+        try:
+            fcntl.lockf(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except IOError:
+            print >>sys.stderr, 'Another instance already running'
+            sys.exit(1)
+            
         if args.init_state:
             with connect(config.state_db) as conn:
                 create_tables(conn)
