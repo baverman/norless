@@ -179,7 +179,7 @@ def show_folders(config):
     for account, box in config.accounts.iteritems():
         print account
         for f, s, name in box.list_folders():
-            print '  ', f, s, name
+            print '   [{}] {}\t({})'.format(s, name, f)
 
 def show_fingerprint(config):
     for account, box in config.accounts.iteritems():
