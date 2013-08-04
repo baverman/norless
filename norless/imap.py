@@ -87,29 +87,21 @@ class Folder(object):
 
     def apply_changes(self, changes, state, trash_folder):
         trash = changes['trash']
+        uids = ','.join(map(str, trash))
         if trash:
             self.select()
-            self.box.client.uid('COPY', ','.join(trash), trash_folder)
-            self.box.client.uid('STORE', ','.join(trash), '+FLAGS', '(\\Deleted)')
+            self.box.client.uid('COPY', uids, trash_folder)
+            self.box.client.uid('STORE', uids, '+FLAGS', '(\\Deleted)')
             self.box.client.expunge()
 
             for uid in trash:
-                del state[uid] 
-
-            state.sync()
+                state.remove(uid) 
 
         seen = changes['seen']
+        uids = ','.join(map(str, seen))
         if seen:
             self.select()
-            self.box.client.uid('STORE', ','.join(seen), '+FLAGS', '(\\Seen)')
-
-            for uid in seen:
-                key, flags = state[uid].split('\n')
-                flags = set(flags)
-                flags.add('S')
-                state[uid] = key + '\n' + ''.join(flags)
-
-            state.sync()
+            self.box.client.uid('STORE', uids, '+FLAGS', '(\\Seen)')
 
         # print changes
         # if changes['seen'] or changes['trash']:
@@ -126,7 +118,7 @@ class Folder(object):
 
         if last_uid:
             result = self.box.client.uid('search', '(UID {}:*)'.format(last_uid+1))
-            uids = [r for r in result[1] if int(r) > last_uid]
+            uids = [r for r in result[1][0].split() if int(r) > last_uid]
             if not uids:
                 return []
 

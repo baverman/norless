@@ -1,82 +1,69 @@
 import sys
 import os.path
 import argparse
-import gdbm as db
 import threading
 
 from mailbox import Maildir, MaildirMessage
 from collections import Counter
 
 from .config import IniConfig
+from .state import State, connect
 
+store_lock = threading.Lock()
 get_maildir_lock = threading.Lock()
 
-def get_maildir(maildir, cache):
+def get_maildir(maildir):
     with get_maildir_lock:
-        try:
-            return cache[maildir]
-        except KeyError:
-            pass
-
-        result = cache[maildir] = Maildir(
-            os.path.expanduser(maildir), factory=None, create=True)
-
+        result = Maildir(os.path.expanduser(maildir), factory=None, create=True)
         result.name = os.path.basename(maildir)
-        result.store_lock = threading.Lock()
-
         return result
 
-def get_state(config, account, folder):
-    return db.open(os.path.join(os.path.expanduser(config.state_dir),
-        '{}.{}'.format(account, folder)), 'c')
-
 def store_message(maildir, state, uid, message, flags):
+    uid = int(uid)
+
     msg = MaildirMessage(message)
     if '\\Seen' in flags:
         msg.add_flag('S')
 
-    if uid in state:
-        key, flags = state[uid].split('\n')
-        if flags != msg.get_flags():
-            oldmessage = maildir[key]
+    s = state.get(uid)
+    if s:
+        if s.flags != msg.get_flags():
+            oldmessage = maildir[s.msgkey]
             oldmessage.set_flags(msg.get_flags())
-            with maildir.store_lock:
-                maildir[key] = oldmessage
+            with store_lock:
+                maildir[s.msgkey] = oldmessage
     else:
-        with maildir.store_lock:
+        with store_lock:
             key = maildir.add(msg)
 
-        state[uid] = key + '\n' + msg.get_flags()
-        state.sync()
+        state.put(uid, key, msg.get_flags())
 
 def sync_local(maildir, state):
-    uid = state.firstkey()
     maxuid = 0
     changes = {'seen':[], 'trash':[]}
-    while uid is not None:
-        key, flags = state[uid].split('\n')
-        flags = set(flags)
-        maxuid = max(int(uid), maxuid)
+    for row in state.getall():  
+        flags = set(row.flags)
+        maxuid = max(row.uid, maxuid)
 
         try:
-            message = maildir[key]
+            message = maildir[row.msgkey]
         except KeyError:
-            changes['trash'].append(uid)
+            print 'NOOOOO', row.uid, row.msgkey
+            changes['trash'].append(row.uid)
         else:
             mflags = set(message.get_flags())
 
             if 'S' in mflags and 'S' not in flags:
-                changes['seen'].append(uid)
-
-        uid = state.nextkey(uid)
+                changes['seen'].append(row.uid)
 
     return maxuid, changes
 
-def sync_account(config, sync_list, maildir_cache):
+def sync_account(config, sync_list):
+    conn = connect(os.path.expanduser(config.state_db))
     for s in sync_list:
         account = config.accounts[s.account] 
-        maildir = get_maildir(s.maildir, maildir_cache)
-        state = get_state(config, s.account, s.folder)
+        maildir = get_maildir(s.maildir)
+        state = State(conn, s.account, s.folder)
 
         maxuid, changes = sync_local(maildir, state)
 
@@ -88,7 +75,6 @@ def sync_account(config, sync_list, maildir_cache):
             store_message(maildir, state, m['uid'], m['body'], m['flags'])
 
 def sync(config):
-    maildir_cache = {}
     accounts = {}
     for s in config.sync_list:
         accounts.setdefault(s.account, []).append(s)
@@ -96,7 +82,7 @@ def sync(config):
     threads = []
     for sync_list in accounts.itervalues():
         t = threading.Thread(target=sync_account,
-            args=(config, sync_list, maildir_cache))
+            args=(config, sync_list))
 
         t.start()
         threads.append(t)
@@ -105,12 +91,11 @@ def sync(config):
         t.join()
 
 def check(config):
-    maildir_cache = {}
-    for s in config.sync_list:
-        get_maildir(s.maildir, maildir_cache)
+    maildirs = set(s.maildir for s in config.sync_list)
 
     result = Counter()
-    for maildir in maildir_cache.values():
+    for maildir_path in maildirs:
+        maildir = get_maildir(maildir_path)
         for message in maildir:
             if 'S' not in message.get_flags():
                 result[maildir.name] += 1
