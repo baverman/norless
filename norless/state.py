@@ -52,3 +52,8 @@ class State(object):
         params = self.account, self.folder, uid, msgkey, flags, is_check
         self.conn.execute('''INSERT OR REPLACE INTO state VALUES (?, ?, ?, ?, ?, ?)''', params)
         self.conn.commit()
+
+    def remove(self, uid):
+        params = self.account, self.folder, uid
+        self.conn.execute('DELETE FROM state WHERE account=? and folder=? and uid=?', params)
+        self.conn.commit()

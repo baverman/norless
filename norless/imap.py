@@ -103,6 +103,14 @@ class Folder(object):
             self.select()
             self.box.client.uid('STORE', uids, '+FLAGS', '(\\Seen)')
 
+            for uid in seen:
+                s = state.get(uid)
+                if s:
+                    flags = set(s.flags)
+                    flags.add('S')
+                    flags = ''.join(flags)
+                    state.put(s.uid, s.msgkey, flags, s.is_check)
+
         # print changes
         # if changes['seen'] or changes['trash']:
         #     msg = MIMEText(json.dumps(changes))
