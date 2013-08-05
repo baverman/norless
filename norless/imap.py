@@ -136,7 +136,7 @@ class Folder(object):
             msg['Date'] = formatdate(None, True)
             msg['From'] = 'norless@fake.org'
             msg['To'] = 'norless@fake.org'
-            msg['Subject'] = 'norless checkpoint'
+            msg['Subject'] = 'norless syncpoint'
             msg['X-Norless'] = config.replica_id
             self.box.client.append(self.name, '(\\Seen)', time.time(), msg.as_string())
 

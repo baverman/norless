@@ -76,13 +76,13 @@ def apply_remote_changes(maildir, state, changes, change_uid):
 
     state.put(change_uid, '', 'S', 1)
 
-def store_message(config, maildir, state, skip_checkpoints, uid, message, flags):
+def store_message(config, maildir, state, skip_syncpoints, uid, message, flags):
     uid = int(uid)
 
     msg = MaildirMessage(message)
     if 'X-Norless' in msg:
         replica_id = msg['X-Norless']
-        if skip_checkpoints or replica_id == config.replica_id:
+        if skip_syncpoints or replica_id == config.replica_id:
             state.put(uid, '', 'S', 1)
             return
         else:
@@ -134,14 +134,14 @@ def sync_account(config, sync_list):
         state = State(conn, s.account, s.folder)
 
         maxuid, changes = sync_local(maildir, state)
-        skip_checkpoints = not maxuid
+        skip_syncpoints = not maxuid
 
         folder = account.get_folder(s.folder)
         folder.apply_changes(config, changes, state, s.trash)
 
         messages = folder.fetch(config.fetch_last, maxuid)
         for m in messages: 
-            store_message(config, maildir, state, skip_checkpoints,
+            store_message(config, maildir, state, skip_syncpoints,
                 m['uid'], m['body'], m['flags'])
 
 def sync(config):
