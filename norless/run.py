@@ -18,10 +18,27 @@ class ConcurentMaildir(Maildir):
         Maildir.__init__(self, *args, **kwargs)
         self.refresh_lock = threading.Lock()
         self.store_lock = threading.Lock()
+        self.refreshed = False
 
-    def _refresh(self):
+    def _refresh(self, force=False):
+        if not force and self.refreshed:
+            return
+
         with self.refresh_lock:
-            return Maildir._refresh(self)
+            if not force and self.refreshed:
+                return
+
+            self._toc = {}
+            for subdir in self._toc_mtimes:
+                path = self._paths[subdir]
+                for entry in os.listdir(path):
+                    p = os.path.join(path, entry)
+                    if os.path.isdir(p):
+                        continue
+                    uniq = entry.split(self.colon)[0]
+                    self._toc[uniq] = os.path.join(subdir, entry)
+
+            self.refreshed = True
 
     def cm_get_flags(self, key):
         mpath = self._lookup(key)
@@ -170,6 +187,7 @@ def check(config):
     result = Counter()
     for maildir_path in maildirs:
         maildir = get_maildir(maildir_path)
+        maildir._refresh(True)
         for key in maildir.iterkeys():
             if 'S' not in maildir.cm_get_flags(key):
                 result[maildir.name] += 1

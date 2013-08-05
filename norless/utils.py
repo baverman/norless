@@ -1,3 +1,7 @@
+import sys
+from time import time as ttime
+
+from contextlib import contextmanager
 from email.header import decode_header
 
 def cached_property(func):
@@ -28,3 +32,10 @@ def dheader(header):
         result += data
 
     return result
+
+@contextmanager
+def profileit(msg='profile'):
+    t = ttime()
+    yield
+    print msg, ttime() - t
+__builtins__['profileit'] = profileit
