@@ -78,7 +78,6 @@ def apply_remote_changes(maildir, state, changes, change_uid):
     if uids:
         for uid in uids:
             s = state.get(uid)
-            print s
             if s and not s.is_check:
                 try:
                     msg = maildir[s.msgkey] 
