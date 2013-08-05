@@ -149,16 +149,20 @@ def sync(config):
     for s in config.sync_list:
         accounts.setdefault(s.account, []).append(s)
 
-    threads = []
-    for sync_list in accounts.itervalues():
-        t = threading.Thread(target=sync_account,
-            args=(config, sync_list))
+    if config.one_thread:
+        for sync_list in accounts.itervalues():
+            sync_account(config, sync_list)
+    else:
+        threads = []
+        for sync_list in accounts.itervalues():
+            t = threading.Thread(target=sync_account,
+                args=(config, sync_list))
 
-        t.start()
-        threads.append(t)
-    
-    for t in threads:
-        t.join()
+            t.start()
+            threads.append(t)
+        
+        for t in threads:
+            t.join()
 
 def check(config):
     maildirs = set(s.maildir for s in config.sync_list)
@@ -196,12 +200,15 @@ def main():
     parser.add_argument('-a', '--account', dest='account')
     parser.add_argument('--init-state', dest='init_state', action='store_true')
     parser.add_argument('--show-fingerprint', dest='show_fingerprint', action='store_true')
+    parser.add_argument('-T', '--one-thread', dest='one_thread', action='store_true')
     
     args = parser.parse_args()
 
     config = IniConfig(args.config)
     if args.account:
         config.restrict_to(args.account)
+
+    config.one_thread = args.one_thread
 
     if args.show_folders:
         show_folders(config)
