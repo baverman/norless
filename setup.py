@@ -17,6 +17,7 @@ setup(
     description = 'Yet another IMAP sync',
     # long_description = open('README.rst').read(),
     zip_safe   = False,
+    data_files = [('norless',['norlessrc.example'])],
     packages = find_packages(exclude=('tests', 'tests.*')),
     include_package_data = True,
     scripts = ['bin/norless', 'bin/check-nl-mail'],

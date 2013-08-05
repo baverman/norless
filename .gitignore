@@ -1,6 +1,6 @@
 *.pyc
 /test.py
 /run
-/bild
+/build
 /dist
 /*.egg-info

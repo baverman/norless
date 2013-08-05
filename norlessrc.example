@@ -1,0 +1,44 @@
+[DEFAULT]
+# Some custom variable
+maildir = ~/mail/inbox
+
+# App config section
+[norless]
+# This is an identifier of your mail copy
+replica_id = laptop
+
+# Path to sqlite3 db with state info
+state_db = ~/mail/state.db
+
+# Amount of messages to be fetched for the first time 
+# fetch_last = 500
+
+# Account sections
+[account home]
+host = imap.somehost1.com
+user = user
+password = password
+
+# You should provide name of the `trash` folder
+# Run `norless --show-folders` to see correct name
+trash = Trash
+
+# Norless use secure connection by default
+# ssl = yes
+
+# You can provide server fingerprint (sha1 hash from cert) in case of secure connection
+# Run `norless --show-fingerprint` to view it
+# fingerprint = E0:9F:35:22:5E:71:A3:C9:3F:1B:76:AD:03:AE:94:EB:C4:30:90:29
+
+# List of folders to sync
+# Format: folder1 -> maildir1 | folder2 -> maildir2
+sync = INBOX -> %(maildir)s
+
+# Prepend any symbols in account section to disable it
+[disabled account work]
+host = imap.gmail.com
+fingerprint = B0:BA:39:2B:BA:32:6E:6F:EB:1A:DD:4D:04:FA:0F:B8:6C:D1:73:FA
+user = user
+password = password
+trash = [Gmail]/Trash
+sync = INBOX -> %(maildir)s

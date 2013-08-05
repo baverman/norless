@@ -28,7 +28,7 @@ class IniConfig(object):
         self.sync_list = []
 
         config = ConfigParser.SafeConfigParser(
-            {'port': '0', 'fetch_last':50, 'ssl':'yes', 'trash': None,
+            {'port': '0', 'fetch_last':500, 'ssl':'yes',
             'sync': None, 'debug': '0', 'fingerprint': None})
         config.read(fname)
         self.parse(config)
