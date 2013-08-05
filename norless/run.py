@@ -207,6 +207,9 @@ def main():
         show_folders(config)
     elif args.show_fingerprint:
         show_fingerprint(config)
+    elif args.init_state:
+        with connect(os.path.expanduser(config.state_db)) as conn:
+            create_tables(conn)
     else:
         lock_file = os.path.join(
             os.path.dirname(os.path.expanduser(config.state_db)), '.norless-lock')
@@ -216,10 +219,6 @@ def main():
         except IOError:
             print >>sys.stderr, 'Another instance already running'
             sys.exit(1)
-            
-        if args.init_state:
-            with connect(config.state_db) as conn:
-                create_tables(conn)
 
         sync(config)
         if args.check:
