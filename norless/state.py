@@ -22,10 +22,11 @@ def create_tables(conn):
     conn.commit()
 
 class State(object):
-    def __init__(self, conn, account, folder):
+    def __init__(self, conn, account, folder, write_lock):
         self.conn = conn
         self.account = account
         self.folder = folder
+        self.write_lock = write_lock
 
     def get(self, uid):
         params = self.account, self.folder, uid
@@ -50,10 +51,12 @@ class State(object):
 
     def put(self, uid, msgkey, flags, is_check=0):
         params = self.account, self.folder, uid, msgkey, flags, is_check
-        self.conn.execute('''INSERT OR REPLACE INTO state VALUES (?, ?, ?, ?, ?, ?)''', params)
-        self.conn.commit()
+        with self.write_lock:
+            self.conn.execute('''INSERT OR REPLACE INTO state VALUES (?, ?, ?, ?, ?, ?)''', params)
+            self.conn.commit()
 
     def remove(self, uid):
         params = self.account, self.folder, uid
-        self.conn.execute('DELETE FROM state WHERE account=? and folder=? and uid=?', params)
-        self.conn.commit()
+        with self.write_lock:
+            self.conn.execute('DELETE FROM state WHERE account=? and folder=? and uid=?', params)
+            self.conn.commit()

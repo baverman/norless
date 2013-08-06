@@ -12,6 +12,7 @@ from .config import IniConfig
 from .state import State, connect, create_tables
 
 get_maildir_lock = threading.Lock()
+state_write_lock = threading.Lock()
 
 class ConcurentMaildir(Maildir):
     def __init__(self, *args, **kwargs):
@@ -147,7 +148,7 @@ def sync_account(config, sync_list):
     for s in sync_list:
         account = config.accounts[s.account] 
         maildir = get_maildir(s.maildir)
-        state = State(conn, s.account, s.folder)
+        state = State(conn, s.account, s.folder, state_write_lock)
 
         maxuid, changes = sync_local(maildir, state)
         skip_syncpoints = not maxuid
