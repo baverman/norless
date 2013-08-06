@@ -1,12 +1,13 @@
 import sys
 import json
 import fcntl
+import socket
 import os.path
 import argparse
 import threading
 
-from mailbox import Maildir, MaildirMessage
 from collections import Counter
+from mailbox import Maildir, MaildirMessage
 
 from .config import IniConfig
 from .state import State, connect, create_tables
@@ -244,6 +245,9 @@ def main():
         except IOError:
             print >>sys.stderr, 'Another instance already running'
             sys.exit(1)
+
+        if config.timeout:
+            socket.setdefaulttimeout(config.timeout)
 
         sync(config)
         if args.check:

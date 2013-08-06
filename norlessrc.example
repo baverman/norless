@@ -13,6 +13,9 @@ state_db = ~/mail/state.db
 # Amount of messages to be fetched for the first time 
 # fetch_last = 500
 
+# Connection timeout
+# timeout = 5
+
 # Account sections
 [account home]
 host = imap.somehost1.com

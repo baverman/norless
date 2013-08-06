@@ -27,8 +27,8 @@ class IniConfig(object):
         self.accounts = {}
         self.sync_list = []
 
-        config = ConfigParser.SafeConfigParser(
-            {'port': '0', 'fetch_last':500, 'ssl':'yes',
+        config = ConfigParser.SafeConfigParser({
+            'port': '0', 'fetch_last':500, 'ssl':'yes', 'timeout': '5',
             'sync': None, 'debug': '0', 'fingerprint': None})
         config.read(fname)
         self.parse(config)
@@ -37,6 +37,7 @@ class IniConfig(object):
         self.state_db = config.get('norless', 'state_db')
         self.fetch_last = config.getint('norless', 'fetch_last')
         self.replica_id = config.get('norless', 'replica_id')
+        self.timeout = config.getint('norless', 'timeout')
 
         for s in config.sections():
             if s.startswith('account'):
