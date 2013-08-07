@@ -6,65 +6,16 @@ import argparse
 import threading
 
 from collections import Counter
-from mailbox import Maildir, MaildirMessage
+
+from mailbox import MaildirMessage
 
 from .utils import FileLock
+from .maildir import Maildir
 from .config import IniConfig
 from .state import State, connect, create_tables
 
 get_maildir_lock = threading.Lock()
 state_write_lock = threading.Lock()
-
-class ConcurentMaildir(Maildir):
-    def __init__(self, *args, **kwargs):
-        Maildir.__init__(self, *args, **kwargs)
-        self.refresh_lock = threading.Lock()
-        self.store_lock = threading.Lock()
-        self.refreshed = False
-
-    def _refresh(self, force=False):
-        if not force and self.refreshed:
-            return
-
-        with self.refresh_lock:
-            if not force and self.refreshed:
-                return
-
-            self._toc = {}
-            for subdir in self._toc_mtimes:
-                path = self._paths[subdir]
-                for entry in os.listdir(path):
-                    p = os.path.join(path, entry)
-                    if os.path.isdir(p):
-                        continue
-                    uniq = entry.split(self.colon)[0]
-                    self._toc[uniq] = os.path.join(subdir, entry)
-
-            self.refreshed = True
-
-    def _lookup(self, key):
-        try:
-            if os.path.exists(os.path.join(self._path, self._toc[key])):
-                return self._toc[key]
-        except KeyError:
-            pass
-        self._refresh(True)
-        try:
-            return self._toc[key]
-        except KeyError:
-            raise KeyError('No message with key: %s' % key)
-
-    def cm_get_flags(self, key):
-        mpath = self._lookup(key)
-        name = os.path.basename(mpath)
-        _, sep, info = name.rpartition(':')
-        if sep:
-            _, sep, flags = info.rpartition(',')
-            if sep:
-                return flags
-        
-        return ''
-
 
 maildir_cache = {}
 def get_maildir(maildir):
@@ -75,7 +26,7 @@ def get_maildir(maildir):
         except KeyError:
             pass
 
-        result = maildir_cache[key] = ConcurentMaildir(key, factory=None, create=True)
+        result = maildir_cache[key] = Maildir(key)
         result.name = os.path.basename(maildir)
         return result
 
@@ -93,16 +44,11 @@ def apply_remote_changes(maildir, state, changes, change_uid):
         for uid in uids:
             s = state.get(uid)
             if s and not s.is_check:
-                try:
-                    msg = maildir[s.msgkey] 
-                except KeyError:
-                    state.remove(uid)
+                if s.msgkey in maildir:
+                    newflags = maildir.add_flags(s.msgkey, 'S')
+                    state.put(s.uid, s.msgkey, newflags)
                 else:
-                    msg.add_flag('S')
-                    with maildir.store_lock:
-                        maildir[s.msgkey] = msg
-
-                    state.put(s.uid, s.msgkey, msg.get_flags())
+                    state.remove(uid)
 
     state.put(change_uid, '', 'S', 1)
 
@@ -123,18 +69,15 @@ def store_message(config, maildir, state, skip_syncpoints, uid, message, flags):
     if '\\Seen' in flags:
         msg.add_flag('S')
 
+    flags = msg.get_flags()
+
     s = state.get(uid)
     if s:
-        if s.flags != msg.get_flags():
-            oldmessage = maildir[s.msgkey]
-            oldmessage.set_flags(msg.get_flags())
-            with maildir.store_lock:
-                maildir[s.msgkey] = oldmessage
+        if s.flags != flags:
+            maildir.set_flags(s.msgkey, flags)
     else:
-        with maildir.store_lock:
-            key = maildir.add(msg)
-
-        state.put(uid, key, msg.get_flags())
+        key = maildir.add(msg, flags)
+        state.put(uid, key, flags)
 
 def get_maildir_changes(maildir, state):
     changes = {'seen':[], 'trash':[]}
@@ -145,7 +88,7 @@ def get_maildir_changes(maildir, state):
         flags = set(row.flags)
 
         try:
-            mflags = maildir.cm_get_flags(row.msgkey)
+            mflags = maildir.get_flags(row.msgkey)
         except KeyError:
             changes['trash'].append(row.uid)
         else:
@@ -183,7 +126,8 @@ def checkpoint_account(config, sync_list):
             if changes['trash'] or changes['seen']:
                 folder = account.get_folder(s.folder)
                 folder.apply_changes(config, changes, state, s.trash)
-                print 'seen: {}, trash: {}'.format(len(changes['seen']), len(changes['trash']))
+                print '{}: seen {}, trash {}'.format(s.account,
+                    len(changes['seen']), len(changes['trash']))
 
 def do_checkpoint(config):
     with config.app_lock(True):
@@ -221,9 +165,8 @@ def do_check(config):
     result = Counter()
     for maildir_path in maildirs:
         maildir = get_maildir(maildir_path)
-        maildir._refresh(True)
-        for key in maildir.iterkeys():
-            if 'S' not in maildir.cm_get_flags(key):
+        for key, flags in maildir.iterflags():
+            if 'S' not in flags:
                 result[maildir.name] += 1
 
     for k, v in result.iteritems():
