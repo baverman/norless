@@ -1,6 +1,7 @@
 import sys
-from time import time as ttime
+import fcntl
 
+from time import time as ttime
 from contextlib import contextmanager
 from email.header import decode_header
 
@@ -39,3 +40,23 @@ def profileit(msg='profile'):
     yield
     print msg, ttime() - t
 __builtins__['profileit'] = profileit
+
+def FileLock(fname):
+    @contextmanager
+    def inner(block=False):
+        fp = open(fname, 'w')
+
+        opts = fcntl.LOCK_EX
+        if not block:
+            opts |= fcntl.LOCK_NB
+
+        try:
+            fcntl.lockf(fp, opts)
+        except IOError:
+            print >>sys.stderr, 'Another instance already running'
+            sys.exit(2)
+
+        yield
+
+    return inner
+
