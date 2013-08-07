@@ -42,6 +42,18 @@ class ConcurentMaildir(Maildir):
 
             self.refreshed = True
 
+    def _lookup(self, key):
+        try:
+            if os.path.exists(os.path.join(self._path, self._toc[key])):
+                return self._toc[key]
+        except KeyError:
+            pass
+        self._refresh(True)
+        try:
+            return self._toc[key]
+        except KeyError:
+            raise KeyError('No message with key: %s' % key)
+
     def cm_get_flags(self, key):
         mpath = self._lookup(key)
         name = os.path.basename(mpath)
