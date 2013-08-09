@@ -116,7 +116,7 @@ def store_message(config, maildir, state, skip_syncpoints, uid, message, flags):
             state.put(uid, '', 'S', 1)
             return
         else:
-            changes = json.loads(msg.get_payload())
+            changes = json.loads(msg.get_payload(decode=True))
             apply_remote_changes(maildir, state, changes, uid)
             return
 
