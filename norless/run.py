@@ -20,14 +20,14 @@ state_write_lock = threading.Lock()
 maildir_cache = {}
 def get_maildir(maildir):
     with get_maildir_lock:
-        key = os.path.expanduser(maildir)
+        key = os.path.expanduser(maildir.path)
         try:
             return maildir_cache[key]
         except KeyError:
             pass
 
         result = maildir_cache[key] = Maildir(key)
-        result.name = os.path.basename(maildir)
+        result.name = os.path.basename(maildir.path)
         return result
 
 def apply_remote_changes(maildir, state, changes, change_uid):
