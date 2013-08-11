@@ -88,8 +88,8 @@ class DBMStateFactory(object):
 class DBMState(object):
     def __init__(self, state_dir, account, folder):
         folder = folder.replace('/', ':')
-        self.db = gdbm.open(
-            os.path.join(state_dir, '{}-{}.db'.format(account, folder)), 'cf')
+        self.path = os.path.join(state_dir, '{}-{}.db'.format(account, folder))
+        self.db = gdbm.open(self.path , 'cf')
 
     def get(self, uid):
         try:
@@ -97,12 +97,23 @@ class DBMState(object):
         except KeyError:
             pass
 
-    def getall(self):
+    def _iteruids(self):
         db = self.db
         uid = db.firstkey()
         while uid != None:
-            yield parse_dbm_value(db[uid])
+            yield uid
             uid = db.nextkey(uid)
+
+    def getall(self):
+        db = self.db
+        for uid in self._iteruids():
+            yield parse_dbm_value(db[uid])
+
+    def get_maxuid(self):
+        try:
+            return max(map(int, self._iteruids()))
+        except ValueError:
+            return 0
 
     def put(self, uid, msgkey, flags, is_check=0):
         self.db[str(uid)] = '{}\t{}\t{}\t{}'.format(uid, msgkey, flags or '',

@@ -3,9 +3,11 @@ import json
 import time
 import imaplib
 
+from hashlib import sha1
+
+from mailbox import Message
 from email.utils import formatdate
 from email.mime.text import MIMEText
-from hashlib import sha1
 
 from .utils import cached_property
 
@@ -165,4 +167,34 @@ class Folder(object):
             next(it)
 
         return result_messages
+
+    def append_messages(self, state, messages):
+        self.select()
+        for msg in messages:
+            del msg['X-Norless-Id']
+            msg['X-Norless-Id'] = msg.msgkey
+
+            del msg['Message-ID']
+            msg['Message-ID'] = msg.msgkey
+
+            self.box.client.append(self.name, '(\\Seen)', time.time(), msg.as_string())
+
+        last_uid = state.get_maxuid()
+        result = self.box.client.uid('search', '(UID {}:*)'.format(last_uid + 1))
+
+        uids = [r for r in result[1][0].split() if int(r) > last_uid]
+        if uids:
+            result = self.box.client.uid('fetch', ','.join(uids),
+                '(UID BODY.PEEK[HEADER])')
+
+            it = iter(result[1])
+            for flags, msg in it:
+                idx = flags.index('UID ')
+                uid = flags[idx+3:].split()[0]
+                msg = Message(msg.replace('\r\n', '\n'))
+
+                if 'X-Norless-Id' in msg:
+                    state.put(uid, msg['X-Norless-Id'].strip(), 'S')
+
+                next(it)
 

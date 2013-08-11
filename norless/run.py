@@ -8,6 +8,7 @@ import threading
 from collections import Counter
 
 from mailbox import MaildirMessage
+from email.utils import parseaddr
 
 from .utils import FileLock
 from .maildir import Maildir
@@ -26,7 +27,6 @@ def get_maildir(maildir):
             pass
 
         result = maildir_cache[key] = Maildir(key)
-        result.name = os.path.basename(maildir.path)
         return result
 
 def apply_remote_changes(maildir, state, changes, change_uid):
@@ -102,9 +102,7 @@ def sync_account(config, sync_list):
         maildir = get_maildir(s.maildir)
         state = config.get_state(s.account, s.folder)
 
-        maxuid = 0
-        for row in state.getall():
-            maxuid = max(maxuid, row.uid)
+        maxuid = state.get_maxuid()
         skip_syncpoints = not maxuid
 
         folder = account.get_folder(s.folder)
@@ -156,15 +154,52 @@ def do_sync(config):
             for t in threads:
                 t.join()
 
+def do_new(config):
+    with config.app_lock():
+        maildirs = {}
+        for s in config.sync_list:
+            if s.maildir.sync_new:
+                maildirs.setdefault(s.maildir.name, []).append(s)
+
+        for sync_list in maildirs.itervalues():
+            maildir = get_maildir(sync_list[0].maildir)
+            state_keys = set()
+            for s in sync_list:
+                state = config.get_state(s.account, s.folder)
+                state_keys.update(r.msgkey for r in state.getall())
+            
+            maildir_keys = set(maildir.toc)
+            new_messages = maildir_keys - state_keys
+
+            if new_messages:
+                addr_messages = {}
+                for msgkey in new_messages:
+                    msg = maildir[msgkey]
+                    addr = parseaddr(msg['From'])[1]
+                    addr_messages.setdefault(addr, []).append(msg)
+
+                for addr, messages in addr_messages.iteritems():
+                    for s in sync_list:
+                        account = config.accounts[s.account]
+                        if account.from_addr == addr:
+                            break
+                    else:
+                        print >>sys.stderr, 'Unknown addr', addr
+                        continue
+
+                    folder = account.get_folder(s.folder)
+                    state = config.get_state(s.account, s.folder)
+                    folder.append_messages(state, messages)
+
 def do_check(config):
     maildirs = set(s.maildir for s in config.sync_list)
 
     result = Counter()
-    for maildir_path in maildirs:
-        maildir = get_maildir(maildir_path)
+    for cmaildir in maildirs:
+        maildir = get_maildir(cmaildir)
         for key, flags in maildir.iterflags():
             if 'S' not in flags:
-                result[maildir.name] += 1
+                result[cmaildir.name] += 1
 
     for k, v in result.iteritems():
         print '{}\t{}'.format(k, v)
@@ -193,6 +228,9 @@ def main():
 
     parser.add_argument('-C', '--check', dest='do_check', action='store_true',
         help='command: check for new messages in local maildir(s)')
+
+    parser.add_argument('-N', '--new', dest='do_new', action='store_true',
+        help='command: sync new messages in maildir(s)')
 
     parser.add_argument('--show-folders', dest='do_show_folders', action='store_true',
         help='command: list remote folders')

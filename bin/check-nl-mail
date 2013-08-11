@@ -6,7 +6,7 @@ from subprocess import Popen, PIPE
 import pynotify
 pynotify.init('check-mail')
 
-stdout, _ = Popen(['/usr/bin/env', 'norless', '-SC'], stdout=PIPE).communicate()
+stdout, _ = Popen(['/usr/bin/env', 'norless', '-NSC'], stdout=PIPE).communicate()
 for row in stdout.splitlines():
     box, count = row.rstrip().split('\t')
     n = pynotify.Notification('New mail', '{} ({})'.format(box, count))

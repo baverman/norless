@@ -8,6 +8,7 @@ from tempfile import mkstemp
 from os.path import join, exists, isfile, basename
 
 from email.message import Message
+from mailbox import MaildirMessage
 
 def parse_info(info):
     if info:
@@ -152,3 +153,10 @@ class Maildir(object):
         
     def __contains__(self, key):
         return key in self.toc
+
+    def __getitem__(self, key):
+        path, info = self.toc[key]
+        msg = MaildirMessage(open(path).read())
+        msg.set_flags(parse_info(info))
+        msg.msgkey = key
+        return msg

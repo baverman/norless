@@ -14,18 +14,10 @@ class Sync(object):
 
 
 class Maildir(object):
-    def __init__(self, path, sync_new=False):
+    def __init__(self, name, path, sync_new=False):
+        self.name = name
         self.path = path
         self.sync_new = sync_new
-
-
-class Config(object):
-    def __init__(self):
-        self.accounts = {}
-        self.sync_list = []
-
-    def sync(self, *args, **kwargs):
-        self.sync_list.append(Sync(*args, **kwargs))
 
 
 class IniConfig(object):
@@ -34,9 +26,10 @@ class IniConfig(object):
         self.maildirs = {}
         self.sync_list = []
 
-        config = ConfigParser.SafeConfigParser({
-            'port': '0', 'fetch_last':500, 'ssl':'yes', 'timeout': '5',
-            'sync': None, 'debug': '0', 'fingerprint': None, 'sync_new': 'no'})
+        config = ConfigParser.SafeConfigParser({'port': '0', 'fetch_last':500,
+            'ssl':'yes', 'timeout': '5', 'sync': None, 'debug': '0',
+            'fingerprint': None, 'sync_new': 'no', 'from': None})
+
         config.read(fname)
         self.parse(config)
 
@@ -61,8 +54,10 @@ class IniConfig(object):
                 ssl = config.getboolean(s, 'ssl')
                 fingerprint = config.get(s, 'fingerprint')
                 debug = config.getint(s, 'debug')
-                self.accounts[account] = ImapBox(host, user, password, port, ssl,
-                    fingerprint, debug)
+                acc = ImapBox(host, user, password, port, ssl, fingerprint, debug)
+                acc.name = account
+                acc.from_addr = config.get(s, 'from')
+                self.accounts[account] = acc
 
                 trash = config.get(s, 'trash')
                 sync = config.get(s, 'sync')
@@ -78,7 +73,7 @@ class IniConfig(object):
                 _, maildir = s.split()[:2]
                 path = config.get(s, 'path')
                 sync_new = config.getboolean(s, 'sync_new')
-                self.maildirs[maildir] = Maildir(path, sync_new)
+                self.maildirs[maildir] = Maildir(maildir, path, sync_new)
 
     def restrict_to(self, account):
         self.accounts = {k: v for k, v in self.accounts.iteritems() if k == account}
