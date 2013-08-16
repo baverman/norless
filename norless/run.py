@@ -228,7 +228,7 @@ def main():
         socket.setdefaulttimeout(config.timeout)
 
     config.app_lock = FileLock(os.path.join(os.path.dirname(
-        os.path.expanduser(config.state_db)), '.norless-lock'))
+        os.path.expanduser(config.state_dir)), '.norless-lock'))
 
     dbm_state = DBMStateFactory(os.path.expanduser(config.state_dir))
     config.get_state = lambda a, f: dbm_state.get(a, f)

@@ -41,7 +41,6 @@ class IniConfig(object):
         self.parse(config)
 
     def parse(self, config):
-        self.state_db = config.get('norless', 'state_db')
         self.state_dir = config.get('norless', 'state_dir')
         self.fetch_last = config.getint('norless', 'fetch_last')
         self.replica_id = config.get('norless', 'replica_id')
