@@ -12,10 +12,9 @@ from mailbox import MaildirMessage
 from .utils import FileLock
 from .maildir import Maildir
 from .config import IniConfig
-from .state import State, connect, create_tables
+from .state import DBMStateFactory
 
 get_maildir_lock = threading.Lock()
-state_write_lock = threading.Lock()
 
 maildir_cache = {}
 def get_maildir(maildir):
@@ -98,36 +97,34 @@ def get_maildir_changes(maildir, state):
     return changes
 
 def sync_account(config, sync_list):
-    with config.connect() as conn:
-        for s in sync_list:
-            account = config.accounts[s.account] 
-            maildir = get_maildir(s.maildir)
-            state = State(conn, s.account, s.folder, state_write_lock)
+    for s in sync_list:
+        account = config.accounts[s.account] 
+        maildir = get_maildir(s.maildir)
+        state = config.get_state(s.account, s.folder)
 
-            maxuid = 0
-            for row in state.getall():
-                maxuid = max(maxuid, row.uid)
-            skip_syncpoints = not maxuid
+        maxuid = 0
+        for row in state.getall():
+            maxuid = max(maxuid, row.uid)
+        skip_syncpoints = not maxuid
 
-            folder = account.get_folder(s.folder)
-            messages = folder.fetch(config.fetch_last, maxuid)
-            for m in messages: 
-                store_message(config, maildir, state, skip_syncpoints,
-                    m['uid'], m['body'], m['flags'])
+        folder = account.get_folder(s.folder)
+        messages = folder.fetch(config.fetch_last, maxuid)
+        for m in messages: 
+            store_message(config, maildir, state, skip_syncpoints,
+                m['uid'], m['body'], m['flags'])
 
 def checkpoint_account(config, sync_list):
-    with config.connect() as conn:
-        for s in sync_list:
-            account = config.accounts[s.account] 
-            maildir = get_maildir(s.maildir)
-            state = State(conn, s.account, s.folder, state_write_lock)
+    for s in sync_list:
+        account = config.accounts[s.account] 
+        maildir = get_maildir(s.maildir)
+        state = config.get_state(s.account, s.folder)
 
-            changes = get_maildir_changes(maildir, state)
-            if changes['trash'] or changes['seen']:
-                folder = account.get_folder(s.folder)
-                folder.apply_changes(config, changes, state, s.trash)
-                print '{}: seen {}, trash {}'.format(s.account,
-                    len(changes['seen']), len(changes['trash']))
+        changes = get_maildir_changes(maildir, state)
+        if changes['trash'] or changes['seen']:
+            folder = account.get_folder(s.folder)
+            folder.apply_changes(config, changes, state, s.trash)
+            print '{}: seen {}, trash {}'.format(s.account,
+                len(changes['seen']), len(changes['trash']))
 
 def do_checkpoint(config):
     with config.app_lock(True):
@@ -186,15 +183,8 @@ def do_show_fingerprint(config):
         box.fingerprint = None
         print account, box.server_fingerprint
 
-def do_init_state(config):
-    with config.connect() as conn:
-        create_tables(conn)
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--init-state', dest='do_init_state', action='store_true',
-        help='command: initialize state db')
-
     parser.add_argument('-S', '--sync', dest='do_sync', action='store_true',
         help='command: sync remote folders to local maildir(s)')
 
@@ -240,7 +230,8 @@ def main():
     config.app_lock = FileLock(os.path.join(os.path.dirname(
         os.path.expanduser(config.state_db)), '.norless-lock'))
 
-    config.connect = lambda: connect(os.path.expanduser(config.state_db))
+    dbm_state = DBMStateFactory(os.path.expanduser(config.state_dir))
+    config.get_state = lambda a, f: dbm_state.get(a, f)
 
     commands = []
     for action in sorted(parser._actions,

@@ -1,4 +1,6 @@
+import os.path
 import sqlite3
+import gdbm
 
 from collections import namedtuple
 
@@ -21,7 +23,7 @@ def create_tables(conn):
     )''')
     conn.commit()
 
-class State(object):
+class SqliteState(object):
     def __init__(self, conn, account, folder, write_lock):
         self.conn = conn
         self.account = account
@@ -60,3 +62,63 @@ class State(object):
         with self.write_lock:
             self.conn.execute('DELETE FROM state WHERE account=? and folder=? and uid=?', params)
             self.conn.commit()
+
+
+def parse_dbm_value(value):
+    uid, key, flags, is_check = value.split('\t')
+    return Row(int(uid), key, flags, is_check == '1')
+
+
+class DBMStateFactory(object):
+    def __init__(self, state_dir):
+        self.state_dir = state_dir
+        self._cache = {}
+
+    def get(self, account, folder):
+        key = account, folder
+        try:
+            return self._cache[key]
+        except KeyError:
+            pass
+
+        state = self._cache[key] = DBMState(self.state_dir, account, folder)
+        return state
+        
+
+class DBMState(object):
+    def __init__(self, state_dir, account, folder):
+        folder = folder.replace('/', ':')
+        self.db = gdbm.open(
+            os.path.join(state_dir, '{}-{}.db'.format(account, folder)), 'cf')
+
+    def get(self, uid):
+        try:
+            return parse_dbm_value(self.db[str(uid)])
+        except KeyError:
+            pass
+
+    def getall(self):
+        db = self.db
+        uid = db.firstkey()
+        while uid != None:
+            yield parse_dbm_value(db[uid])
+            uid = db.nextkey(uid)
+
+    def put(self, uid, msgkey, flags, is_check=0):
+        self.db[str(uid)] = '{}\t{}\t{}\t{}'.format(uid, msgkey, flags or '',
+            '1' if is_check else '0')
+        self.db.sync()
+
+    def remove(self, uid, sync=True):
+        try:
+            del self.db[str(uid)]
+            if sync:
+                self.db.sync()
+        except KeyError:
+            pass
+
+    def remove_many(self, uids):
+        for uid in uids:
+            self.remove(uid, False)
+
+        self.db.sync()

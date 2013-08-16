@@ -113,9 +113,7 @@ class Folder(object):
             self.box.client.uid('COPY', uids, trash_folder)
             self.box.client.uid('STORE', uids, '+FLAGS', '(\\Deleted)')
             self.box.client.expunge()
-
-            for uid in trash:
-                state.remove(uid) 
+            state.remove_many(trash) 
 
         seen = changes['seen']
         uids = ','.join(map(str, seen))
