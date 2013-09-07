@@ -197,4 +197,4 @@ class Folder(object):
                     state.put(uid, msg['X-Norless-Id'].strip(), 'S')
 
                 next(it)
-
+        

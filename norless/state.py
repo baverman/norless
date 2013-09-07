@@ -115,6 +115,12 @@ class DBMState(object):
         except ValueError:
             return 0
 
+    def get_minuid(self):
+        try:
+            return min(map(int, self._iteruids()))
+        except ValueError:
+            return 0
+
     def put(self, uid, msgkey, flags, is_check=0):
         self.db[str(uid)] = '{}\t{}\t{}\t{}'.format(uid, msgkey, flags or '',
             '1' if is_check else '0')

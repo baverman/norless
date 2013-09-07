@@ -121,8 +121,9 @@ def checkpoint_account(config, sync_list):
         if changes['trash'] or changes['seen']:
             folder = account.get_folder(s.folder)
             folder.apply_changes(config, changes, state, s.trash)
-            print '{}: seen {}, trash {}'.format(s.account,
-                len(changes['seen']), len(changes['trash']))
+            if not config.quiet:
+                print '{}: seen {}, trash {}'.format(s.account,
+                    len(changes['seen']), len(changes['trash']))
 
 def do_checkpoint(config):
     with config.app_lock(True):
@@ -184,6 +185,12 @@ def do_new(config):
                         if account.from_addr == addr:
                             break
                     else:
+                        state = config.get_state(s.account, s.folder)
+                        minuid = state.get_minuid()
+                        for r in messages:
+                            minuid -= 1
+                            state.put(minuid, r.msgkey, 'S')
+
                         print >>sys.stderr, 'Unknown addr', addr
                         continue
 
@@ -248,6 +255,9 @@ def main():
     parser.add_argument('-s', '--run-sequentially', dest='one_thread', action='store_true',
         help='run actions sequentially in one thread')
 
+    parser.add_argument('-q', '--quiet', dest='quiet', action='store_true',
+        help='silent run')
+
     def get_index(r):
         try:
             return sys.argv.index(r)
@@ -261,6 +271,7 @@ def main():
         config.restrict_to(args.account)
 
     config.one_thread = args.one_thread
+    config.quiet = args.quiet
 
     if config.timeout:
         socket.setdefaulttimeout(config.timeout)
