@@ -218,7 +218,13 @@ def do_show_folders(config):
     for account, box in config.accounts.iteritems():
         print account
         for f, s, name in box.list_folders():
-            print '   [{}] {}\t({})'.format(s, name, f)
+            if '&' in name:
+                lname = ' ({})'.format(name.replace('&', '+').replace(',', '/')
+                    .decode('utf-7').encode('utf-8'))
+            else:
+                lname = ''
+
+            print '   [{}] {}\t({}){}'.format(s, name, f, lname)
 
 def do_show_fingerprint(config):
     for account, box in config.accounts.iteritems():

@@ -12,7 +12,10 @@ from email.mime.text import MIMEText
 from .utils import cached_property
 
 LIST_REGEX = re.compile(r'\((?P<flags>.*?)\) "(?P<sep>.*)" (?P<name>.*)')
-PARENS_REGEX = re.compile(r'\((.*?)\)')
+
+def get_field(info, field):
+    idx = info.index(field + ' ')
+    return info[idx + len(field):].split()[0].strip(')')
 
 class ImapBox(object):
     def __init__(self, host, username, password, port=None, ssl=True,
@@ -71,9 +74,9 @@ class ImapBox(object):
 
     def get_status(self, folder):
         result = self.client.status(folder, '(MESSAGES UNSEEN)')
-        m = PARENS_REGEX.search(result[1][0])
-        result = m.group(1).split()
-        return int(result[1]), int(result[3])
+        messages = int(get_field(result[1][0], 'MESSAGES'))
+        unseen = int(get_field(result[1][0], 'UNSEEN'))
+        return messages, unseen
 
     def select(self, name):
         if name != self.selected_folder:
@@ -153,15 +156,17 @@ class Folder(object):
             result = self.box.client.uid('fetch', ','.join(uids),
                 '(UID FLAGS BODY.PEEK[])')
         else:
+            if not self.total:
+                return []
+
             start, end = max(self.total - last_n, 1), self.total
             result = self.box.client.fetch('{}:{}'.format(start, end), '(UID FLAGS BODY.PEEK[])')
 
         it = iter(result[1])
-        for flags, msg in it:
-            attrs = PARENS_REGEX.search(flags).group(1).split()
+        for info, msg in it:
             r = {}
-            r['uid'] = attrs[1]
-            r['flags'] = imaplib.ParseFlags(flags)
+            r['uid'] = get_field(info, 'UID')
+            r['flags'] = imaplib.ParseFlags(info)
             r['body'] = msg.replace('\r\n', '\n')
             result_messages.append(r)
             next(it)
@@ -188,9 +193,8 @@ class Folder(object):
                 '(UID BODY.PEEK[HEADER])')
 
             it = iter(result[1])
-            for flags, msg in it:
-                idx = flags.index('UID ')
-                uid = flags[idx+3:].split()[0]
+            for info, msg in it:
+                uid = get_field(info, 'UID')
                 msg = Message(msg.replace('\r\n', '\n'))
 
                 if 'X-Norless-Id' in msg:
