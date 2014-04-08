@@ -13,9 +13,11 @@ from .utils import cached_property
 
 LIST_REGEX = re.compile(r'\((?P<flags>.*?)\) "(?P<sep>.*)" (?P<name>.*)')
 
+
 def get_field(info, field):
     idx = info.index(field + ' ')
     return info[idx + len(field):].split()[0].strip(')')
+
 
 class ImapBox(object):
     def __init__(self, host, username, password, port=None, ssl=True,
@@ -47,7 +49,7 @@ class ImapBox(object):
             if self.fingerprint != server_fingerprint:
                 raise Exception('Mismatched fingerprint for {} {}'.format(
                     self.host, server_fingerprint))
-        
+
         if self.debug:
             cl.debug = self.debug
 
@@ -61,7 +63,7 @@ class ImapBox(object):
     def list_folders(self):
         result = []
         resp = self.client.list()
-        for item in resp[1]: 
+        for item in resp[1]:
             m = LIST_REGEX.search(item)
             flags, sep, name = m.group('flags', 'sep', 'name')
             name = name.strip('"')
@@ -110,7 +112,7 @@ class Folder(object):
     def select(self):
         self.box.select(self.name)
 
-    def apply_changes(self, config, changes, state, trash_folder):
+    def apply_changes(self, changes, state, trash_folder):
         trash = changes['trash']
         uids = ','.join(map(str, trash))
         if trash:
@@ -118,7 +120,7 @@ class Folder(object):
             self.box.client.uid('COPY', uids, trash_folder)
             self.box.client.uid('STORE', uids, '+FLAGS', '(\\Deleted)')
             self.box.client.expunge()
-            state.remove_many(trash) 
+            state.remove_many(trash)
 
         seen = changes['seen']
         uids = ','.join(map(str, seen))
@@ -134,13 +136,14 @@ class Folder(object):
                     flags = ''.join(flags)
                     state.put(s.uid, s.msgkey, flags, s.is_check)
 
+    def log_changes(self, replica_id, changes):
         if changes['seen'] or changes['trash']:
             msg = MIMEText(json.dumps(changes))
             msg['Date'] = formatdate(None, True)
             msg['From'] = 'norless@fake.org'
             msg['To'] = 'norless@fake.org'
             msg['Subject'] = 'norless syncpoint'
-            msg['X-Norless'] = config.replica_id
+            msg['X-Norless'] = replica_id
             self.box.client.append(self.name, '(\\Seen)', time.time(), msg.as_string())
 
     def fetch(self, last_n=None, last_uid=None):
@@ -201,4 +204,3 @@ class Folder(object):
                     state.put(uid, msg['X-Norless-Id'].strip(), 'S')
 
                 next(it)
-        

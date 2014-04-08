@@ -10,13 +10,14 @@ from os.path import join, exists, isfile, basename
 from email.message import Message
 from mailbox import MaildirMessage
 
+
 def parse_info(info):
     if info:
         _, _, flags = info.partition(',')
         return flags
 
     return ''
-    
+
 
 class Maildir(object):
     def __init__(self, path, create=True, msg_mode=0600, dir_mode=0700):
@@ -42,7 +43,7 @@ class Maildir(object):
                 for p in (self.path_new, self.path_cur, self.path_tmp):
                     if not exists(p):
                         os.mkdir(p, self.dir_mode)
-    
+
     @property
     def toc(self):
         try:
@@ -68,7 +69,7 @@ class Maildir(object):
         prefix = '{}.Q{}P{}'.format(int(now), self._counter, self._pid)
         suffix = '.{}'.format(self._host)
         return mkstemp(suffix, prefix, self.path_tmp)
-    
+
     def add(self, message, flags=''):
         with self.lock:
             fd, fpath = self._make_tmp_file()
@@ -150,7 +151,7 @@ class Maildir(object):
     def iterflags(self):
         for key, (_, info) in self.toc.items():
             yield key, parse_info(info)
-        
+
     def __contains__(self, key):
         return key in self.toc
 
