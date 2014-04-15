@@ -1,4 +1,5 @@
 import sys
+import ssl
 import json
 import socket
 import os.path
@@ -16,6 +17,13 @@ from .config import IniConfig
 from .state import DBMStateFactory
 
 get_maildir_lock = threading.Lock()
+
+
+def error(msg=None):
+    if msg:
+        print >>sys.stderr, msg
+
+    sys.exit(1)
 
 
 maildir_cache = {}
@@ -248,6 +256,14 @@ def do_show_fingerprint(config):
         print account, box.server_fingerprint
 
 
+def do_show_cert(config):
+    if len(config.accounts) > 1:
+        error('You must provide exactly one account')
+
+    for account, box in config.accounts.iteritems():
+        sys.stdout.write(ssl.DER_cert_to_PEM_cert(box.server_cert))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-S', '--sync', dest='do_sync', action='store_true',
@@ -267,6 +283,9 @@ def main():
 
     parser.add_argument('--show-fingerprint', dest='do_show_fingerprint',
         action='store_true', help='command: show server cert fingerprint')
+
+    parser.add_argument('--show-cert', dest='do_show_cert',
+        action='store_true', help='command: show server cert. You must specify account')
 
     parser.add_argument('-p', '--checkpoint', dest='checkpoint', action='store_true',
         help='make checkpoint for local changes')

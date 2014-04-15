@@ -32,12 +32,13 @@ class ImapBox(object):
 
         self.selected_folder = None
 
-    def get_fingerprint(self, client):
-        if not self.ssl:
-            return
+    def get_cert(self, client):
+        if self.ssl:
+            return client.sslobj.getpeercert(True)
 
+    def get_fingerprint(self, cert):
         return ':'.join(map(lambda r: r.encode('hex').upper(),
-            sha1(client.sslobj.getpeercert(True)).digest()))
+            sha1(cert).digest()))
 
     @cached_property
     def client(self):
@@ -45,7 +46,7 @@ class ImapBox(object):
         cl = C(self.host, self.port)
 
         if self.ssl and self.fingerprint:
-            server_fingerprint = self.get_fingerprint(cl)
+            server_fingerprint = self.get_fingerprint(self.get_cert(cl))
             if self.fingerprint != server_fingerprint:
                 raise Exception('Mismatched fingerprint for {} {}'.format(
                     self.host, server_fingerprint))
@@ -58,7 +59,11 @@ class ImapBox(object):
 
     @cached_property
     def server_fingerprint(self):
-        return self.get_fingerprint(self.client)
+        return self.get_fingerprint(self.server_cert)
+
+    @cached_property
+    def server_cert(self):
+        return self.get_cert(self.client)
 
     def list_folders(self):
         result = []
