@@ -120,9 +120,28 @@ def sync_account(config, sync_list):
 
         folder = account.get_folder(s.folder)
         messages = folder.fetch(config.fetch_last, maxuid)
+
         for m in messages:
             store_message(config, maildir, state, skip_syncpoints,
                 m['uid'], m['body'], m['flags'])
+
+        if not s.maildir.sync_new:
+            new_messages = [r for r in state.getall() if not r.flags]
+            messages_to_check = []
+
+            for m in new_messages:
+                if m.msgkey in maildir:
+                    messages_to_check.append(m)
+
+            if messages_to_check:
+                flags = folder.get_flags([r.uid for r in messages_to_check])
+                for m in messages_to_check:
+                    if m.uid not in flags:
+                        maildir.discard(m.msgkey)
+                        state.remove(m.uid)
+                    elif '\\Seen' in flags[m.uid]:
+                        maildir.add_flags(m.msgkey, 'S')
+                        state.put(m.uid, m.msgkey, maildir.get_flags(m.msgkey))
 
 
 def remote_sync_account(config, sync_list):

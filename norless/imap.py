@@ -181,6 +181,14 @@ class Folder(object):
 
         return result_messages
 
+    def get_flags(self, uids):
+        result = self.box.client.uid('fetch', ','.join(map(str, uids)), '(UID FLAGS)')
+        flags = {}
+        for info in result[1]:
+            flags[int(get_field(info, 'UID'))] = imaplib.ParseFlags(info)
+
+        return flags
+
     def append_messages(self, state, messages):
         self.select()
         for msg in messages:
