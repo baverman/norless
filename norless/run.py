@@ -280,6 +280,7 @@ def do_show_cert(config):
         error('You must provide exactly one account')
 
     for account, box in config.accounts.iteritems():
+        box.fingerprint = None
         sys.stdout.write(ssl.DER_cert_to_PEM_cert(box.server_cert))
 
 
