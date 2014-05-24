@@ -83,7 +83,7 @@ class DBMStateFactory(object):
 
         state = self._cache[key] = DBMState(self.state_dir, account, folder)
         return state
-        
+
 
 class DBMState(object):
     def __init__(self, state_dir, account, folder):

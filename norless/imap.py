@@ -1,13 +1,9 @@
 import re
-import json
 import time
 import imaplib
 
 from hashlib import sha1
-
 from mailbox import Message
-from email.utils import formatdate
-from email.mime.text import MIMEText
 
 from .utils import cached_property
 
@@ -117,39 +113,17 @@ class Folder(object):
     def select(self):
         self.box.select(self.name)
 
-    def apply_changes(self, changes, state, trash_folder):
-        trash = changes['trash']
-        uids = ','.join(map(str, trash))
-        if trash:
-            self.select()
-            self.box.client.uid('COPY', uids, trash_folder)
-            self.box.client.uid('STORE', uids, '+FLAGS', '(\\Deleted)')
-            self.box.client.expunge()
-            state.remove_many(trash)
+    def trash(self, uids, trash_folder):
+        uids = ','.join(map(str, uids))
+        self.select()
+        self.box.client.uid('COPY', uids, trash_folder)
+        self.box.client.uid('STORE', uids, '+FLAGS', '(\\Deleted)')
+        self.box.client.expunge()
 
-        seen = changes['seen']
-        uids = ','.join(map(str, seen))
-        if seen:
-            self.select()
-            self.box.client.uid('STORE', uids, '+FLAGS', '(\\Seen)')
-
-            for uid in seen:
-                s = state.get(uid)
-                if s:
-                    flags = set(s.flags)
-                    flags.add('S')
-                    flags = ''.join(flags)
-                    state.put(s.uid, s.msgkey, flags, s.is_check)
-
-    def log_changes(self, replica_id, changes):
-        if changes['seen'] or changes['trash']:
-            msg = MIMEText(json.dumps(changes))
-            msg['Date'] = formatdate(None, True)
-            msg['From'] = 'norless@fake.org'
-            msg['To'] = 'norless@fake.org'
-            msg['Subject'] = 'norless syncpoint'
-            msg['X-Norless'] = replica_id
-            self.box.client.append(self.name, '(\\Seen)', time.time(), msg.as_string())
+    def seen(self, uids):
+        uids = ','.join(map(str, uids))
+        self.select()
+        self.box.client.uid('STORE', uids, '+FLAGS', '(\\Seen)')
 
     def fetch(self, last_n=None, last_uid=None):
         self.select()
@@ -185,11 +159,12 @@ class Folder(object):
         result = self.box.client.uid('fetch', ','.join(map(str, uids)), '(UID FLAGS)')
         flags = {}
         for info in result[1]:
+            if not info: continue
             flags[int(get_field(info, 'UID'))] = imaplib.ParseFlags(info)
 
         return flags
 
-    def append_messages(self, state, messages):
+    def append_messages(self, messages, last_uid):
         self.select()
         for msg in messages:
             del msg['X-Norless-Id']
@@ -200,10 +175,10 @@ class Folder(object):
 
             self.box.client.append(self.name, '(\\Seen)', time.time(), msg.as_string())
 
-        last_uid = state.get_maxuid()
         result = self.box.client.uid('search', '(UID {}:*)'.format(last_uid + 1))
 
         uids = [r for r in result[1][0].split() if int(r) > last_uid]
+        stored_messages = []
         if uids:
             result = self.box.client.uid('fetch', ','.join(uids),
                 '(UID BODY.PEEK[HEADER])')
@@ -214,6 +189,8 @@ class Folder(object):
                 msg = Message(msg.replace('\r\n', '\n'))
 
                 if 'X-Norless-Id' in msg:
-                    state.put(uid, msg['X-Norless-Id'].strip(), 'S')
+                    stored_messages.append((int(uid), msg['X-Norless-Id'].strip()))
 
                 next(it)
+
+        return stored_messages

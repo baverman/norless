@@ -12,6 +12,9 @@ class Sync(object):
         self.maildir = maildir
         self.trash = trash or 'Trash'
 
+    def __repr__(self):
+        return '<Sync:{0.account} {0.folder}>'.format(self)
+
 
 class Maildir(object):
     def __init__(self, name, path, sync_new=False):
@@ -36,7 +39,6 @@ class IniConfig(object):
     def parse(self, config):
         self.state_dir = config.get('norless', 'state_dir')
         self.fetch_last = config.getint('norless', 'fetch_last')
-        self.replica_id = config.get('norless', 'replica_id')
         self.timeout = config.getint('norless', 'timeout')
 
         self.parse_maildirs(config)

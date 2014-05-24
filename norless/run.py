@@ -1,6 +1,5 @@
 import sys
 import ssl
-import json
 import socket
 import os.path
 import argparse
@@ -39,48 +38,14 @@ def get_maildir(maildir):
         return result
 
 
-def apply_remote_changes(maildir, state, changes, change_uid):
-    uids = changes['trash']
-    if uids:
-        for uid in uids:
-            s = state.get(uid)
-            if s and not s.is_check:
-                maildir.discard(s.msgkey)
-                state.remove(uid)
-
-    uids = changes['seen']
-    if uids:
-        for uid in uids:
-            s = state.get(uid)
-            if s and not s.is_check:
-                if s.msgkey in maildir:
-                    newflags = maildir.add_flags(s.msgkey, 'S')
-                    state.put(s.uid, s.msgkey, newflags)
-                else:
-                    state.remove(uid)
-
-    state.put(change_uid, '', 'S', 1)
-
-
-def store_message(config, maildir, state, skip_syncpoints, uid, message, flags):
-    uid = int(uid)
-
+def store_message(maildir, state, uid, message, flags):
     msg = MaildirMessage(message)
-    if 'X-Norless' in msg:
-        replica_id = msg['X-Norless']
-        if skip_syncpoints or replica_id == config.replica_id:
-            state.put(uid, '', 'S', 1)
-            return
-        else:
-            changes = json.loads(msg.get_payload(decode=True))
-            apply_remote_changes(maildir, state, changes, uid)
-            return
-
     if '\\Seen' in flags:
         msg.add_flag('S')
 
     flags = msg.get_flags()
 
+    uid = int(uid)
     s = state.get(uid)
     if s:
         if s.flags != flags:
@@ -91,22 +56,20 @@ def store_message(config, maildir, state, skip_syncpoints, uid, message, flags):
 
 
 def get_maildir_changes(maildir, state):
-    changes = {'seen':[], 'trash':[]}
+    seen = []
+    trash = []
     for row in state.getall():
-        if row.is_check:
-            continue
-
         flags = set(row.flags)
 
         try:
             mflags = maildir.get_flags(row.msgkey)
         except KeyError:
-            changes['trash'].append(row.uid)
+            trash.append(row.uid)
         else:
             if 'S' in mflags and 'S' not in flags:
-                changes['seen'].append(row.uid)
+                seen.append(row.uid)
 
-    return changes
+    return seen, trash
 
 
 def sync_account(config, sync_list):
@@ -116,14 +79,11 @@ def sync_account(config, sync_list):
         state = config.get_state(s.account, s.folder)
 
         maxuid = state.get_maxuid()
-        skip_syncpoints = not maxuid
-
         folder = account.get_folder(s.folder)
         messages = folder.fetch(config.fetch_last, maxuid)
 
         for m in messages:
-            store_message(config, maildir, state, skip_syncpoints,
-                m['uid'], m['body'], m['flags'])
+            store_message(maildir, state, m['uid'], m['body'], m['flags'])
 
         if not s.maildir.sync_new:
             new_messages = [r for r in state.getall() if not r.flags]
@@ -145,22 +105,31 @@ def sync_account(config, sync_list):
 
 
 def remote_sync_account(config, sync_list):
-    for s in sync_list:
-        account = config.accounts[s.account]
-        maildir = get_maildir(s.maildir)
-        state = config.get_state(s.account, s.folder)
+    for sr in sync_list:
+        account = config.accounts[sr.account]
+        maildir = get_maildir(sr.maildir)
+        state = config.get_state(sr.account, sr.folder)
 
-        changes = get_maildir_changes(maildir, state)
-        if changes['trash'] or changes['seen']:
-            folder = account.get_folder(s.folder)
-            folder.apply_changes(changes, state, s.trash)
+        seen, trash = get_maildir_changes(maildir, state)
+        if seen:
+            folder = account.get_folder(sr.folder)
+            folder.seen(seen)
+            for uid in seen:
+                s = state.get(uid)
+                if s:
+                    flags = set(s.flags)
+                    flags.add('S')
+                    flags = ''.join(flags)
+                    state.put(s.uid, s.msgkey, flags, s.is_check)
 
-            if config.checkpoint:
-                folder.log_changes(config.replica_id, changes)
+        if trash:
+            folder = account.get_folder(sr.folder)
+            folder.trash(trash, sr.trash)
+            state.remove_many(trash)
 
-            if not config.quiet:
-                print '{}: seen {}, trash {}'.format(s.account,
-                    len(changes['seen']), len(changes['trash']))
+        if (seen or trash) and not config.quiet:
+            print '{}: seen {}, trash {}'.format(sr.account,
+                len(seen), len(trash))
 
 
 def do_remote_sync(config):
@@ -236,7 +205,9 @@ def do_new(config):
 
                     folder = account.get_folder(s.folder)
                     state = config.get_state(s.account, s.folder)
-                    folder.append_messages(state, messages)
+                    sm = folder.append_messages(messages, state.get_maxuid())
+                    for uid, msgkey in sm:
+                        state.put(uid, msgkey, 'S')
 
 
 def do_check(config):
@@ -245,7 +216,7 @@ def do_check(config):
     result = Counter()
     for cmaildir in maildirs:
         maildir = get_maildir(cmaildir)
-        for key, flags in maildir.iterflags():
+        for _, flags in maildir.iterflags():
             if 'S' not in flags:
                 result[cmaildir.name] += 1
 
@@ -279,7 +250,7 @@ def do_show_cert(config):
     if len(config.accounts) > 1:
         error('You must provide exactly one account')
 
-    for account, box in config.accounts.iteritems():
+    for _, box in config.accounts.iteritems():
         box.fingerprint = None
         sys.stdout.write(ssl.DER_cert_to_PEM_cert(box.server_cert))
 
@@ -307,9 +278,6 @@ def main():
     parser.add_argument('--show-cert', dest='do_show_cert',
         action='store_true', help='command: show server cert. You must specify account')
 
-    parser.add_argument('-p', '--checkpoint', dest='checkpoint', action='store_true',
-        help='make checkpoint for local changes')
-
     parser.add_argument('-f', '--config', dest='config',
         default=os.path.expanduser('~/.config/norlessrc'),
         help='path to config file (%(default)s)')
@@ -336,7 +304,6 @@ def main():
         config.restrict_to(args.account)
 
     config.one_thread = args.one_thread
-    config.checkpoint = args.checkpoint
     config.quiet = args.quiet
 
     if config.timeout:
