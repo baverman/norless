@@ -43,7 +43,7 @@ class ImapBox(object):
 
         if self.ssl and self.fingerprint:
             server_fingerprint = self.get_fingerprint(self.get_cert(cl))
-            if self.fingerprint != server_fingerprint:
+            if server_fingerprint not in self.fingerprint:
                 raise Exception('Mismatched fingerprint for {} {}'.format(
                     self.host, server_fingerprint))
 

@@ -54,7 +54,7 @@ class IniConfig(object):
                 user = config.get(s, 'user')
                 password = config.get(s, 'password')
                 ssl = config.getboolean(s, 'ssl')
-                fingerprint = config.get(s, 'fingerprint')
+                fingerprint = config.get(s, 'fingerprint').split(',')
                 debug = config.getint(s, 'debug')
                 acc = ImapBox(host, user, password, port, ssl, fingerprint, debug)
                 acc.name = account
