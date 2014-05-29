@@ -240,23 +240,14 @@ def do_show_folders(config):
             print '   [{}] {}\t({}){}'.format(s, name, f, lname)
 
 
-def do_show_fingerprint(config):
-    for account, box in config.accounts.iteritems():
-        box.fingerprint = None
-        print account, box.server_fingerprint
-
-
-def do_show_cert(config):
-    if len(config.accounts) > 1:
-        error('You must provide exactly one account')
-
-    for _, box in config.accounts.iteritems():
-        box.fingerprint = None
-        sys.stdout.write(ssl.DER_cert_to_PEM_cert(box.server_cert))
-
-
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+commands to get certificates:
+    openssl s_client -showcerts -connect host:993 < /dev/null
+    openssl s_client -showcerts -starttls imap -connect host:143 < /dev/null'''
+    )
     parser.add_argument('-S', '--sync', dest='do_sync', action='store_true',
         help='command: sync remote folders to local maildir(s)')
 
@@ -271,12 +262,6 @@ def main():
 
     parser.add_argument('--show-folders', dest='do_show_folders', action='store_true',
         help='command: list remote folders')
-
-    parser.add_argument('--show-fingerprint', dest='do_show_fingerprint',
-        action='store_true', help='command: show server cert fingerprint')
-
-    parser.add_argument('--show-cert', dest='do_show_cert',
-        action='store_true', help='command: show server cert. You must specify account')
 
     parser.add_argument('-f', '--config', dest='config',
         default=os.path.expanduser('~/.config/norlessrc'),

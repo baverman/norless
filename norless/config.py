@@ -1,5 +1,6 @@
 import re
 import ConfigParser
+import os.path
 
 from .imap import ImapBox
 
@@ -31,7 +32,7 @@ class IniConfig(object):
 
         config = ConfigParser.SafeConfigParser({'port': '0', 'fetch_last':500,
             'ssl':'yes', 'timeout': '5', 'sync': None, 'debug': '0',
-            'fingerprint': None, 'sync_new': 'no', 'from': None})
+            'fingerprint': None, 'sync_new': 'no', 'from': None, 'cafile': None})
 
         config.read(fname)
         self.parse(config)
@@ -54,9 +55,12 @@ class IniConfig(object):
                 user = config.get(s, 'user')
                 password = config.get(s, 'password')
                 ssl = config.getboolean(s, 'ssl')
-                fingerprint = config.get(s, 'fingerprint').split(',')
+                fingerprint = config.get(s, 'fingerprint')
+                cafile = config.get(s, 'cafile')
+                if cafile:
+                    cafile = os.path.expanduser(cafile)
                 debug = config.getint(s, 'debug')
-                acc = ImapBox(host, user, password, port, ssl, fingerprint, debug)
+                acc = ImapBox(host, user, password, port, ssl, fingerprint, cafile, debug)
                 acc.name = account
                 acc.from_addr = config.get(s, 'from')
                 self.accounts[account] = acc

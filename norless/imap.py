@@ -4,8 +4,9 @@ import imaplib
 
 from hashlib import sha1
 from mailbox import Message
+from ssl import DER_cert_to_PEM_cert
 
-from .utils import cached_property
+from .utils import cached_property, check_cert
 
 LIST_REGEX = re.compile(r'\((?P<flags>.*?)\) "(?P<sep>.*)" (?P<name>.*)')
 
@@ -17,13 +18,14 @@ def get_field(info, field):
 
 class ImapBox(object):
     def __init__(self, host, username, password, port=None, ssl=True,
-            fingerprint=None, debug=None):
+            fingerprint=None, cafile=None, debug=None):
         self.host = host
         self.port = port or (993 if ssl else 143)
         self.username = username
         self.password = password
         self.ssl = ssl
         self.fingerprint = fingerprint
+        self.cafile = cafile
         self.debug = debug
 
         self.selected_folder = None
@@ -41,25 +43,20 @@ class ImapBox(object):
         C = imaplib.IMAP4_SSL if self.ssl else imaplib.IMAP4
         cl = C(self.host, self.port)
 
-        if self.ssl and self.fingerprint:
-            server_fingerprint = self.get_fingerprint(self.get_cert(cl))
-            if server_fingerprint not in self.fingerprint:
-                raise Exception('Mismatched fingerprint for {} {}'.format(
-                    self.host, server_fingerprint))
+        if self.ssl:
+            if self.fingerprint:
+                server_fingerprint = self.get_fingerprint(self.get_cert(cl))
+                if server_fingerprint != self.fingerprint:
+                    raise Exception('Mismatched fingerprint for {} {}'.format(
+                        self.host, server_fingerprint))
+            else:
+                check_cert(DER_cert_to_PEM_cert(self.get_cert(cl)), self.cafile)
 
         if self.debug:
             cl.debug = self.debug
 
         cl.login(self.username, self.password)
         return cl
-
-    @cached_property
-    def server_fingerprint(self):
-        return self.get_fingerprint(self.server_cert)
-
-    @cached_property
-    def server_cert(self):
-        return self.get_cert(self.client)
 
     def list_folders(self):
         result = []

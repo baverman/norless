@@ -1,9 +1,11 @@
 import sys
 import fcntl
+import ssl
 
 from time import time as ttime
 from contextlib import contextmanager
 from email.header import decode_header
+from subprocess import PIPE, Popen
 
 
 def cached_property(func):
@@ -63,3 +65,14 @@ def FileLock(fname):
         yield
 
     return inner
+
+
+def check_cert(data, cafile=None):
+    cmd = ['openssl', 'verify']
+    if cafile:
+        cmd.extend(('-CAfile', cafile))
+
+    p = Popen(cmd, stdout=PIPE, stderr=PIPE, stdin=PIPE)
+    out, err = p.communicate(data)
+    if p.returncode:
+        raise ssl.SSLError(out + err)
