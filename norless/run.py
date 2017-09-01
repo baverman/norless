@@ -4,6 +4,7 @@ import socket
 import os.path
 import argparse
 import threading
+import logging
 
 from collections import Counter
 
@@ -16,6 +17,7 @@ from .config import IniConfig
 from .state import DBMStateFactory
 
 get_maildir_lock = threading.Lock()
+log = logging.getLogger('norless')
 
 
 def error(msg=None):
@@ -73,35 +75,38 @@ def get_maildir_changes(maildir, state):
 
 
 def sync_account(config, sync_list):
-    for s in sync_list:
-        account = config.accounts[s.account]
-        maildir = get_maildir(s.maildir)
-        state = config.get_state(s.account, s.folder)
+    try:
+        for s in sync_list:
+            account = config.accounts[s.account]
+            maildir = get_maildir(s.maildir)
+            state = config.get_state(s.account, s.folder)
 
-        maxuid = state.get_maxuid()
-        folder = account.get_folder(s.folder)
-        messages = folder.fetch(config.fetch_last, maxuid)
+            maxuid = state.get_maxuid()
+            folder = account.get_folder(s.folder)
+            messages = folder.fetch(config.fetch_last, maxuid)
 
-        for m in messages:
-            store_message(maildir, state, m['uid'], m['body'], m['flags'])
+            for m in messages:
+                store_message(maildir, state, m['uid'], m['body'], m['flags'])
 
-        if not s.maildir.sync_new:
-            new_messages = [r for r in state.getall() if not r.flags]
-            messages_to_check = []
+            if not s.maildir.sync_new:
+                new_messages = [r for r in state.getall() if not r.flags]
+                messages_to_check = []
 
-            for m in new_messages:
-                if m.msgkey in maildir:
-                    messages_to_check.append(m)
+                for m in new_messages:
+                    if m.msgkey in maildir:
+                        messages_to_check.append(m)
 
-            if messages_to_check:
-                flags = folder.get_flags([r.uid for r in messages_to_check])
-                for m in messages_to_check:
-                    if m.uid not in flags:
-                        maildir.discard(m.msgkey)
-                        state.remove(m.uid)
-                    elif '\\Seen' in flags[m.uid]:
-                        maildir.add_flags(m.msgkey, 'S')
-                        state.put(m.uid, m.msgkey, maildir.get_flags(m.msgkey))
+                if messages_to_check:
+                    flags = folder.get_flags([r.uid for r in messages_to_check])
+                    for m in messages_to_check:
+                        if m.uid not in flags:
+                            maildir.discard(m.msgkey)
+                            state.remove(m.uid)
+                        elif '\\Seen' in flags[m.uid]:
+                            maildir.add_flags(m.msgkey, 'S')
+                            state.put(m.uid, m.msgkey, maildir.get_flags(m.msgkey))
+    except:
+        log.exception('Error during processing account %s %s', s.account, s.folder)
 
 
 def remote_sync_account(config, sync_list):
@@ -299,6 +304,8 @@ commands to get certificates:
 
     dbm_state = DBMStateFactory(os.path.expanduser(config.state_dir))
     config.get_state = lambda a, f: dbm_state.get(a, f)
+
+    logging.basicConfig(level='ERROR')
 
     commands = []
     for action in sorted(parser._actions,
