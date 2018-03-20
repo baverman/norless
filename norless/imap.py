@@ -18,7 +18,7 @@ def get_field(info, field):
 
 class ImapBox(object):
     def __init__(self, host, username, password, port=None, ssl=True,
-            fingerprint=None, cafile=None, debug=None):
+            fingerprint=None, cafile=None, debug=None, xoauth2=None):
         self.host = host
         self.port = port or (993 if ssl else 143)
         self.username = username
@@ -29,6 +29,7 @@ class ImapBox(object):
         self.debug = debug
 
         self.selected_folder = None
+        self.xoauth2 = xoauth2
 
     def get_cert(self, client):
         if self.ssl:
@@ -55,8 +56,16 @@ class ImapBox(object):
         if self.debug:
             cl.debug = self.debug
 
-        cl.login(self.username, self.password)
+        if self.xoauth2:
+            self.xoauth2_login(cl, self.xoauth2, self.username)
+        else:
+            cl.login(self.username, self.password)
         return cl
+
+    def xoauth2_login(self, client, cfg, username):
+        def xoauth(data):
+            return 'user={}\x01auth=Bearer {}\x01\x01'.format(username, self.xoauth2.get_token())
+        client.authenticate('XOAUTH2', xoauth)
 
     def list_folders(self):
         result = []

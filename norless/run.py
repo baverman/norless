@@ -1,5 +1,4 @@
 import sys
-import ssl
 import socket
 import os.path
 import argparse
@@ -299,10 +298,9 @@ commands to get certificates:
     if config.timeout:
         socket.setdefaulttimeout(config.timeout)
 
-    config.app_lock = FileLock(os.path.join(os.path.dirname(
-        os.path.expanduser(config.state_dir)), '.norless-lock'))
+    config.app_lock = FileLock(os.path.join(config.state_dir, '.norless-lock'))
 
-    dbm_state = DBMStateFactory(os.path.expanduser(config.state_dir))
+    dbm_state = DBMStateFactory(config.state_dir)
     config.get_state = lambda a, f: dbm_state.get(a, f)
 
     logging.basicConfig(level='ERROR')
