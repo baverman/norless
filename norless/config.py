@@ -50,6 +50,49 @@ class XOauth2Holder(object):
         return token
 
 
+class IniSmtpConfig(object):
+    def __init__(self, fname):
+        self.accounts = {}
+        self.maildirs = {}
+        self.sync_list = []
+
+        config = ConfigParser.SafeConfigParser({'smtp_port': '587', 'debug': '0',
+            'from': None, 'smtp_cafile': None, 'password': '', 'timeout': '5', 'xoauth2': 'no'})
+
+        config.read(fname)
+        self.parse(config)
+
+    def parse(self, config):
+        self.state_dir = os.path.expanduser(config.get('norless', 'state_dir'))
+        self.timeout = config.getint('norless', 'timeout')
+        self.parse_accounts(config)
+
+    def parse_accounts(self, config):
+        for s in config.sections():
+            if s.startswith('account'):
+                _, account = s.split()[:2]
+                acc = {
+                    'host': config.get(s, 'smtp_host'),
+                    'port': config.getint(s, 'smtp_port'),
+                    'user': config.get(s, 'user'),
+                    'password': config.get(s, 'password'),
+                    'debug': config.getint(s, 'debug'),
+                    'from_addr': config.get(s, 'from'),
+                }
+                cafile = config.get(s, 'smtp_cafile')
+                if cafile:
+                    acc['cafile'] = os.path.expanduser(cafile)
+
+                xoauth2 = {}
+                if config.getboolean(s, 'xoauth2'):
+                    acc['xoauth2'] = XOauth2Holder(self.state_dir, account,
+                                                   config.get(s, 'xoauth2_client_id'),
+                                                   config.get(s, 'xoauth2_secret'),
+                                                   config.get(s, 'xoauth2_refresh'))
+
+                self.accounts[account] = acc
+
+
 class IniConfig(object):
     def __init__(self, fname):
         self.accounts = {}

@@ -9,7 +9,7 @@ SCOPE = 'https://mail.google.com'
 
 
 def silent_http_error_default(self, url, fp, errcode, errmsg, headers):
-    return fp
+    return urllib.addinfourl(fp, headers, url, errcode)
 
 
 urllib.URLopener.http_error_default = silent_http_error_default
@@ -47,8 +47,10 @@ def refresh_token(client_id, secret, refresh_token):
     params['refresh_token'] = refresh_token
     params['grant_type'] = 'refresh_token'
 
-    response = opener.open(TOKEN_ENDPOINT, urllib.urlencode(params)).read()
-    return json.loads(response)
+    response = opener.open(TOKEN_ENDPOINT, urllib.urlencode(params))
+    if response.code == 200:
+        return json.loads(response.read())
+    raise Exception('Refresh error {}'.format(response.read()))
 
 
 if __name__ == '__main__':
