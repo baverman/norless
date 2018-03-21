@@ -33,7 +33,7 @@ class XOauth2Holder(object):
         self.refresh_token = refresh_token
 
     def _cached_token(self):
-        if os.path.exists(self.fname) and os.path.getctime(self.fname) < time.time():
+        if os.path.exists(self.fname) and os.path.getctime(self.fname) > time.time():
             return open(self.fname).read()
 
     def get_token(self):
