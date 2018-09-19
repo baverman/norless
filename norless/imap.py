@@ -1,10 +1,11 @@
 import re
 import time
 import imaplib
+import socket
+import ssl
 
 from hashlib import sha1
 from mailbox import Message
-from ssl import DER_cert_to_PEM_cert
 
 from .utils import cached_property, check_cert
 
@@ -14,6 +15,16 @@ LIST_REGEX = re.compile(r'\((?P<flags>.*?)\) "(?P<sep>.*)" (?P<name>.*)')
 def get_field(info, field):
     idx = info.index(field + ' ')
     return info[idx + len(field):].split()[0].strip(')')
+
+
+class IMAP4_SSL_TLS_12(imaplib.IMAP4_SSL):
+    def open(self, host = '', port = imaplib.IMAP4_SSL_PORT):
+        self.host = host
+        self.port = port
+        self.sock = socket.create_connection((host, port))
+        self.sslobj = ssl.wrap_socket(self.sock, self.keyfile, self.certfile,
+                                      ssl_version=ssl.PROTOCOL_TLSv1_2)
+        self.file = self.sslobj.makefile('rb')
 
 
 class ImapBox(object):
@@ -41,7 +52,7 @@ class ImapBox(object):
 
     @cached_property
     def client(self):
-        C = imaplib.IMAP4_SSL if self.ssl else imaplib.IMAP4
+        C = IMAP4_SSL_TLS_12 if self.ssl else imaplib.IMAP4
         cl = C(self.host, self.port)
 
         if self.ssl:
@@ -51,7 +62,8 @@ class ImapBox(object):
                     raise Exception('Mismatched fingerprint for {} {}'.format(
                         self.host, server_fingerprint))
             else:
-                check_cert(DER_cert_to_PEM_cert(self.get_cert(cl)), self.cafile)
+                cert = ssl.DER_cert_to_PEM_cert(self.get_cert(cl))
+                check_cert(cert, self.cafile)
 
         if self.debug:
             cl.debug = self.debug
