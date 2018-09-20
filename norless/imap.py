@@ -17,13 +17,13 @@ def get_field(info, field):
     return info[idx + len(field):].split()[0].strip(')')
 
 
-class IMAP4_SSL_TLS_12(imaplib.IMAP4_SSL):
+class IMAP4_SSL_TLS_SNI(imaplib.IMAP4_SSL):
     def open(self, host = '', port = imaplib.IMAP4_SSL_PORT):
         self.host = host
         self.port = port
         self.sock = socket.create_connection((host, port))
-        self.sslobj = ssl.wrap_socket(self.sock, self.keyfile, self.certfile,
-                                      ssl_version=ssl.PROTOCOL_TLSv1_2)
+        self.sslobj = ssl.SSLSocket(self.sock, self.keyfile, self.certfile,
+                                    server_hostname=host)
         self.file = self.sslobj.makefile('rb')
 
 
@@ -52,7 +52,7 @@ class ImapBox(object):
 
     @cached_property
     def client(self):
-        C = IMAP4_SSL_TLS_12 if self.ssl else imaplib.IMAP4
+        C = IMAP4_SSL_TLS_SNI if self.ssl else imaplib.IMAP4
         cl = C(self.host, self.port)
 
         if self.ssl:
