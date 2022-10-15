@@ -19,13 +19,6 @@ get_maildir_lock = threading.Lock()
 log = logging.getLogger('norless')
 
 
-def error(msg=None):
-    if msg:
-        print >>sys.stderr, msg
-
-    sys.exit(1)
-
-
 maildir_cache = {}
 def get_maildir(maildir):
     with get_maildir_lock:
@@ -132,8 +125,8 @@ def remote_sync_account(config, sync_list):
             state.remove_many(trash)
 
         if (seen or trash) and not config.quiet:
-            print '{}: seen {}, trash {}'.format(sr.account,
-                len(seen), len(trash))
+            print('{}: seen {}, trash {}'.format(sr.account,
+                len(seen), len(trash)))
 
 
 def do_remote_sync(config):
@@ -142,7 +135,7 @@ def do_remote_sync(config):
         for s in config.sync_list:
             accounts.setdefault(s.account, []).append(s)
 
-        for sync_list in accounts.itervalues():
+        for sync_list in accounts.values():
             remote_sync_account(config, sync_list)
 
 
@@ -153,11 +146,11 @@ def do_sync(config):
             accounts.setdefault(s.account, []).append(s)
 
         if config.one_thread:
-            for sync_list in accounts.itervalues():
+            for sync_list in accounts.values():
                 sync_account(config, sync_list)
         else:
             threads = []
-            for sync_list in accounts.itervalues():
+            for sync_list in accounts.values():
                 t = threading.Thread(target=sync_account,
                     args=(config, sync_list))
 
@@ -175,7 +168,7 @@ def do_new(config):
             if s.maildir.sync_new:
                 maildirs.setdefault(s.maildir.name, []).append(s)
 
-        for sync_list in maildirs.itervalues():
+        for sync_list in maildirs.values():
             maildir = get_maildir(sync_list[0].maildir)
             state_keys = set()
             for s in sync_list:
@@ -192,7 +185,7 @@ def do_new(config):
                     addr = parseaddr(msg['From'])[1]
                     addr_messages.setdefault(addr, []).append(msg)
 
-                for addr, messages in addr_messages.iteritems():
+                for addr, messages in addr_messages.items():
                     for s in sync_list:
                         account = config.accounts[s.account]
                         if account.from_addr == addr:
@@ -204,7 +197,7 @@ def do_new(config):
                             minuid -= 1
                             state.put(minuid, r.msgkey, 'S')
 
-                        print >>sys.stderr, 'Unknown addr', addr
+                        print('Unknown addr', addr, file=sys.stderr)
                         continue
 
                     folder = account.get_folder(s.folder)
@@ -224,16 +217,16 @@ def do_check(config):
             if 'S' not in flags:
                 result[cmaildir.name] += 1
 
-    for k, v in result.iteritems():
-        print '{}\t{}'.format(k, v)
+    for k, v in result.items():
+        print('{}\t{}'.format(k, v))
 
     if not result:
         sys.exit(1)
 
 
 def do_show_folders(config):
-    for account, box in config.accounts.iteritems():
-        print account
+    for account, box in config.accounts.items():
+        print(account)
         for f, s, name in box.list_folders():
             if '&' in name:
                 lname = ' ({})'.format(name.replace('&', '+').replace(',', '/')
@@ -241,7 +234,7 @@ def do_show_folders(config):
             else:
                 lname = ''
 
-            print '   [{}] {}\t({}){}'.format(s, name, f, lname)
+            print('   [{}] {}\t({}){}'.format(s, name, f, lname))
 
 
 def main():
@@ -313,3 +306,7 @@ commands to get certificates:
 
     for command in commands:
         globals()[command](config)
+
+
+if __name__ == '__main__':
+    main()

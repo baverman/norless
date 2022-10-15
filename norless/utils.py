@@ -7,6 +7,26 @@ from contextlib import contextmanager
 from email.header import decode_header
 from subprocess import PIPE, Popen
 
+btype = type(b'')
+ntype = type('')
+utype = type(u'')
+
+
+def bstr(s, encoding='latin-1'):
+    if type(s) is utype:
+        return s.encode(encoding)
+    return s
+
+
+def nstr(s, encoding='latin-1'):
+    t = type(s)
+    if t is not ntype:
+        if t is btype:
+            return s.decode(encoding)
+        elif t is utype:
+            return s.encode(encoding)
+    return s
+
 
 def cached_property(func):
     name = '_' + func.__name__
@@ -43,7 +63,7 @@ def dheader(header):
 def profileit(msg='profile'):
     t = ttime()
     yield
-    print msg, ttime() - t
+    print(msg, ttime() - t)
 __builtins__['profileit'] = profileit
 
 
@@ -59,7 +79,7 @@ def FileLock(fname):
         try:
             fcntl.lockf(fp, opts)
         except IOError:
-            print >>sys.stderr, 'Another instance already running'
+            print('Another instance already running', file=sys.stderr)
             sys.exit(2)
 
         yield

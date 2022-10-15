@@ -5,7 +5,7 @@ def install_script(self, dist, script_name, script_text, dev_path=None):
     script_text = easy_install.get_script_header(script_text) + (
         ''.join(script_text.splitlines(True)[1:]))
 
-    self.write_script(script_name, script_text, 'b')
+    self.write_script(script_name, script_text, '')
 
 easy_install.easy_install.install_script = install_script
 

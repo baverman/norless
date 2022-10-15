@@ -8,10 +8,11 @@ import smtplib
 from base64 import b64encode
 
 from .config import IniSmtpConfig
+from .utils import bstr, nstr
 
 
 def encode_token(user, token):
-    return b64encode('user={}\x01auth=Bearer {}\x01\x01'.format(user, token))
+    return nstr(b64encode(bstr('user={}\x01auth=Bearer {}\x01\x01'.format(user, token))))
 
 
 def send(config, from_addr, recipients, msg):

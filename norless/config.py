@@ -1,6 +1,6 @@
 import time
 import re
-import ConfigParser
+from configparser import SafeConfigParser
 import os.path
 
 from .imap import ImapBox
@@ -43,7 +43,7 @@ class XOauth2Holder(object):
             info = gmail.refresh_token(self.client_id, self.secret, self.refresh_token)
             token = info['access_token']
             expire = time.time() + info['expires_in'] * 0.9
-            with open(self.fname, 'wb') as f:
+            with open(self.fname, 'w') as f:
                 f.write(token)
             os.utime(self.fname, (expire, expire))
 
@@ -56,8 +56,9 @@ class IniSmtpConfig(object):
         self.maildirs = {}
         self.sync_list = []
 
-        config = ConfigParser.SafeConfigParser({'smtp_port': '587', 'debug': '0',
-            'from': None, 'smtp_cafile': None, 'password': '', 'timeout': '5', 'xoauth2': 'no'})
+        config = SafeConfigParser(
+            {'smtp_port': '587', 'debug': '0', 'password': '',
+             'timeout': '5', 'xoauth2': 'no'})
 
         config.read(fname)
         self.parse(config)
@@ -83,7 +84,6 @@ class IniSmtpConfig(object):
                 if cafile:
                     acc['cafile'] = os.path.expanduser(cafile)
 
-                xoauth2 = {}
                 if config.getboolean(s, 'xoauth2'):
                     acc['xoauth2'] = XOauth2Holder(self.state_dir, account,
                                                    config.get(s, 'xoauth2_client_id'),
@@ -99,10 +99,9 @@ class IniConfig(object):
         self.maildirs = {}
         self.sync_list = []
 
-        config = ConfigParser.SafeConfigParser({'port': '0', 'fetch_last':500,
-            'ssl':'yes', 'timeout': '5', 'sync': None, 'debug': '0',
-            'fingerprint': None, 'sync_new': 'no', 'from': None, 'cafile': None,
-            'xoauth2': 'no', 'password': ''})
+        config = SafeConfigParser({'port': '0', 'fetch_last': '500',
+            'ssl':'yes', 'timeout': '5', 'debug': '0',
+            'sync_new': 'no', 'xoauth2': 'no', 'password': ''})
 
         config.read(fname)
         self.parse(config)
@@ -125,8 +124,8 @@ class IniConfig(object):
                 user = config.get(s, 'user')
                 password = config.get(s, 'password')
                 ssl = config.getboolean(s, 'ssl')
-                fingerprint = config.get(s, 'fingerprint')
-                cafile = config.get(s, 'cafile')
+                fingerprint = config.get(s, 'fingerprint', fallback=None)
+                cafile = config.get(s, 'cafile', fallback=None)
                 if cafile:
                     cafile = os.path.expanduser(cafile)
                 debug = config.getint(s, 'debug')
@@ -140,7 +139,7 @@ class IniConfig(object):
 
                 acc = ImapBox(host, user, password, port, ssl, fingerprint, cafile, debug, xoauth2)
                 acc.name = account
-                acc.from_addr = config.get(s, 'from')
+                acc.from_addr = config.get(s, 'from', fallback=None)
                 self.accounts[account] = acc
 
                 trash = config.get(s, 'trash')
@@ -160,5 +159,5 @@ class IniConfig(object):
                 self.maildirs[maildir] = Maildir(maildir, path, sync_new)
 
     def restrict_to(self, account):
-        self.accounts = {k: v for k, v in self.accounts.iteritems() if k == account}
+        self.accounts = {k: v for k, v in self.accounts.items() if k == account}
         self.sync_list = [r for r in self.sync_list if r.account == account]
