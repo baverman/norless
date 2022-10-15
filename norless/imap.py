@@ -1,30 +1,20 @@
 import re
 import time
 import imaplib
-import socket
 import ssl
 
 from hashlib import sha1
 from mailbox import Message
 
-from .utils import cached_property, check_cert
+from .utils import cached_property, check_cert, bstr, nstr
 
-LIST_REGEX = re.compile(r'\((?P<flags>.*?)\) "(?P<sep>.*)" (?P<name>.*)')
+LIST_REGEX = re.compile(rb'\((?P<flags>.*?)\) "(?P<sep>.*)" (?P<name>.*)')
 
 
 def get_field(info, field):
-    idx = info.index(field + ' ')
-    return info[idx + len(field):].split()[0].strip(')')
-
-
-class IMAP4_SSL_TLS_SNI(imaplib.IMAP4_SSL):
-    def open(self, host = '', port = imaplib.IMAP4_SSL_PORT):
-        self.host = host
-        self.port = port
-        self.sock = socket.create_connection((host, port))
-        self.sslobj = ssl.SSLSocket(self.sock, self.keyfile, self.certfile,
-                                    server_hostname=host)
-        self.file = self.sslobj.makefile('rb')
+    field = bstr(field)
+    idx = info.index(field + b' ')
+    return nstr(info[idx + len(field):].split()[0].strip(b')'))
 
 
 class ImapBox(object):
@@ -44,7 +34,7 @@ class ImapBox(object):
 
     def get_cert(self, client):
         if self.ssl:
-            return client.sslobj.getpeercert(True)
+            return client.sock.getpeercert(True)
 
     def get_fingerprint(self, cert):
         return ':'.join(map(lambda r: r.encode('hex').upper(),
@@ -52,7 +42,7 @@ class ImapBox(object):
 
     @cached_property
     def client(self):
-        C = IMAP4_SSL_TLS_SNI if self.ssl else imaplib.IMAP4
+        C = imaplib.IMAP4_SSL if self.ssl else imaplib.IMAP4
         cl = C(self.host, self.port)
 
         if self.ssl:
@@ -63,7 +53,7 @@ class ImapBox(object):
                         self.host, server_fingerprint))
             else:
                 cert = ssl.DER_cert_to_PEM_cert(self.get_cert(cl))
-                check_cert(cert, self.cafile)
+                check_cert(bstr(cert), self.cafile)
 
         if self.debug:
             cl.debug = self.debug
@@ -85,8 +75,8 @@ class ImapBox(object):
         for item in resp[1]:
             m = LIST_REGEX.search(item)
             flags, sep, name = m.group('flags', 'sep', 'name')
-            name = name.strip('"')
-            result.append((flags, sep, name))
+            name = nstr(name).strip('"')
+            result.append((nstr(flags), nstr(sep), name))
 
         return result
 
@@ -94,14 +84,14 @@ class ImapBox(object):
         return Folder(self, name)
 
     def get_status(self, folder):
-        result = self.client.status(folder, '(MESSAGES UNSEEN)')
+        result = self.client.status(self.client._quote(folder), '(MESSAGES UNSEEN)')
         messages = int(get_field(result[1][0], 'MESSAGES'))
         unseen = int(get_field(result[1][0], 'UNSEEN'))
         return messages, unseen
 
     def select(self, name):
         if name != self.selected_folder:
-            self.client.select(name)
+            self.client.select(self.client._quote(name))
             self.selected_folder = name
 
 
@@ -153,7 +143,7 @@ class Folder(object):
             if not uids:
                 return []
 
-            result = self.box.client.uid('fetch', ','.join(uids),
+            result = self.box.client.uid('fetch', b','.join(uids),
                 '(UID FLAGS BODY.PEEK[])')
         else:
             if not self.total:
@@ -166,8 +156,8 @@ class Folder(object):
         for info, msg in it:
             r = {}
             r['uid'] = get_field(info, 'UID')
-            r['flags'] = imaplib.ParseFlags(info)
-            r['body'] = msg.replace('\r\n', '\n')
+            r['flags'] = tuple(map(nstr, imaplib.ParseFlags(info)))
+            r['body'] = msg.replace(b'\r\n', b'\n')
             result_messages.append(r)
             next(it)
 
@@ -178,7 +168,7 @@ class Folder(object):
         flags = {}
         for info in result[1]:
             if not info: continue
-            flags[int(get_field(info, 'UID'))] = imaplib.ParseFlags(info)
+            flags[int(get_field(info, 'UID'))] = tuple(map(nstr, imaplib.ParseFlags(info)))
 
         return flags
 
@@ -191,23 +181,26 @@ class Folder(object):
             del msg['Message-ID']
             msg['Message-ID'] = msg.msgkey
 
-            self.box.client.append(self.name, '(\\Seen)', time.time(), msg.as_string())
+            self.box.client.append(self.box.client._quote(self.name), '(\\Seen)', time.time(), msg.as_bytes())
 
         result = self.box.client.uid('search', '(UID {}:*)'.format(last_uid + 1))
 
         uids = [r for r in result[1][0].split() if int(r) > last_uid]
         stored_messages = []
         if uids:
-            result = self.box.client.uid('fetch', ','.join(uids),
+            result = self.box.client.uid('fetch', b','.join(uids),
                 '(UID BODY.PEEK[HEADER])')
 
             it = iter(result[1])
             for info, msg in it:
                 uid = get_field(info, 'UID')
-                msg = Message(msg.replace('\r\n', '\n'))
+                msg = Message(msg.replace(b'\r\n', b'\n'))
 
                 if 'X-Norless-Id' in msg:
                     stored_messages.append((int(uid), msg['X-Norless-Id'].strip()))
+
+                if 'Message-ID' in msg:
+                    stored_messages.append((int(uid), msg['Message-ID'].strip()))
 
                 next(it)
 

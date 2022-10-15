@@ -20,7 +20,7 @@ def parse_info(info):
 
 
 class Maildir(object):
-    def __init__(self, path, create=True, msg_mode=0600, dir_mode=0700):
+    def __init__(self, path, create=True, msg_mode=0o600, dir_mode=0o700):
         self.path = path
         self.msg_mode = msg_mode
         self.dir_mode = dir_mode
@@ -76,7 +76,7 @@ class Maildir(object):
             msgkey = basename(fpath)
 
             if isinstance(message, Message):
-                message = message.as_string()
+                message = message.as_bytes()
 
             os.write(fd, message)
             os.close(fd)
@@ -157,7 +157,7 @@ class Maildir(object):
 
     def __getitem__(self, key):
         path, info = self.toc[key]
-        msg = MaildirMessage(open(path).read())
+        msg = MaildirMessage(open(path, 'rb').read())
         msg.set_flags(parse_info(info))
         msg.msgkey = key
         return msg

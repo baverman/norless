@@ -1,8 +1,9 @@
 import os.path
 import sqlite3
-import gdbm
+from dbm import gnu as gdbm
 
 from collections import namedtuple
+from .utils import bstr, nstr
 
 Row = namedtuple('Row', 'uid, msgkey, flags, is_check')
 
@@ -65,7 +66,7 @@ class SqliteState(object):
 
 
 def parse_dbm_value(value):
-    uid, key, flags, is_check = value.split('\t')
+    uid, key, flags, is_check = nstr(value).split('\t')
     return Row(int(uid), key, flags, is_check == '1')
 
 
@@ -122,8 +123,8 @@ class DBMState(object):
             return 0
 
     def put(self, uid, msgkey, flags, is_check=0):
-        self.db[str(uid)] = '{}\t{}\t{}\t{}'.format(uid, msgkey, flags or '',
-            '1' if is_check else '0')
+        self.db[str(uid)] = bstr('{}\t{}\t{}\t{}'.format(uid, msgkey, flags or '',
+            '1' if is_check else '0'))
         self.db.sync()
 
     def remove(self, uid, sync=True):
