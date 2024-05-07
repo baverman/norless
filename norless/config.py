@@ -1,6 +1,6 @@
 import time
 import re
-from configparser import SafeConfigParser
+from configparser import ConfigParser
 import os.path
 
 from .imap import ImapBox
@@ -56,7 +56,7 @@ class IniSmtpConfig(object):
         self.maildirs = {}
         self.sync_list = []
 
-        config = SafeConfigParser(
+        config = ConfigParser(
             {'smtp_port': '587', 'debug': '0', 'password': '',
              'timeout': '5', 'xoauth2': 'no'})
 
@@ -99,7 +99,7 @@ class IniConfig(object):
         self.maildirs = {}
         self.sync_list = []
 
-        config = SafeConfigParser({'port': '0', 'fetch_last': '500',
+        config = ConfigParser({'port': '0', 'fetch_last': '500',
             'ssl':'yes', 'timeout': '5', 'debug': '0',
             'sync_new': 'no', 'xoauth2': 'no', 'password': ''})
 
