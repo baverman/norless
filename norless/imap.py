@@ -51,7 +51,7 @@ class ImapBox(object):
                 if server_fingerprint != self.fingerprint:
                     raise Exception('Mismatched fingerprint for {} {}'.format(
                         self.host, server_fingerprint))
-            else:
+            elif self.cafile:
                 cert = ssl.DER_cert_to_PEM_cert(self.get_cert(cl))
                 check_cert(bstr(cert), self.cafile)
 
