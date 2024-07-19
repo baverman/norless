@@ -80,7 +80,7 @@ class IniSmtpConfig(object):
                     'debug': config.getint(s, 'debug'),
                     'from_addr': config.get(s, 'from'),
                 }
-                cafile = config.get(s, 'smtp_cafile')
+                cafile = config.get(s, 'smtp_cafile', fallback=None)
                 if cafile:
                     acc['cafile'] = os.path.expanduser(cafile)
 
