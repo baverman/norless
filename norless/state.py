@@ -2,18 +2,25 @@ import os.path
 import sqlite3
 from dbm import gnu as gdbm
 
-from collections import namedtuple
-from .utils import bstr, nstr
+from .utils import nstr
+from typing import Iterator, NamedTuple
 
-Row = namedtuple('Row', 'uid, msgkey, flags, is_check')
 
-def connect(fname):
+class Row(NamedTuple):
+    uid: int
+    msgkey: str
+    flags: str
+    is_check: bool
+
+
+def connect(fname: str) -> sqlite3.Connection:
     conn = sqlite3.connect(fname)
     conn.text_factory = str
     return conn
 
-def create_tables(conn):
-    conn.execute('''CREATE TABLE IF NOT EXISTS state(
+
+def create_tables(conn: sqlite3.Connection) -> None:
+    conn.execute("""CREATE TABLE IF NOT EXISTS state(
         account text,
         folder text,
         uid integer,
@@ -21,22 +28,25 @@ def create_tables(conn):
         flags text,
         is_check integer,
         UNIQUE(account, folder, uid, msgkey)
-    )''')
+    )""")
     conn.commit()
 
-class SqliteState(object):
-    def __init__(self, conn, account, folder, write_lock):
+
+class SqliteState:
+    def __init__(self, conn: sqlite3.Connection, account: str, folder: str):
         self.conn = conn
         self.account = account
         self.folder = folder
-        self.write_lock = write_lock
 
-    def get(self, uid):
+    def get(self, uid: int) -> Row | None:
         params = self.account, self.folder, uid
-        result = self.conn.execute('''SELECT uid, msgkey, flags, is_check
-            FROM state WHERE account=? and folder=? and uid=?''', params)
+        rows = self.conn.execute(
+            """SELECT uid, msgkey, flags, is_check
+            FROM state WHERE account=? and folder=? and uid=?""",
+            params,
+        )
 
-        result = [Row(*r) for r in result]
+        result = [Row(*r) for r in rows]
         if result:
             if len(result) > 1:
                 raise Exception('Too many rows')
@@ -45,37 +55,38 @@ class SqliteState(object):
         else:
             return None
 
-    def getall(self):
+    def getall(self) -> Iterator[Row]:
         params = self.account, self.folder
-        result = self.conn.execute('''SELECT uid, msgkey, flags, is_check
-            FROM state WHERE account=? and folder=?''', params)
+        result = self.conn.execute(
+            """SELECT uid, msgkey, flags, is_check
+            FROM state WHERE account=? and folder=?""",
+            params,
+        )
 
         return (Row(*r) for r in result)
 
-    def put(self, uid, msgkey, flags, is_check=0):
-        params = self.account, self.folder, uid, msgkey, flags, is_check
-        with self.write_lock:
-            self.conn.execute('''INSERT OR REPLACE INTO state VALUES (?, ?, ?, ?, ?, ?)''', params)
-            self.conn.commit()
+    def put(self, uid: int, msgkey: str, flags: str, is_check: bool = False) -> None:
+        params = self.account, self.folder, uid, msgkey, flags, int(is_check)
+        self.conn.execute("""INSERT OR REPLACE INTO state VALUES (?, ?, ?, ?, ?, ?)""", params)
+        self.conn.commit()
 
-    def remove(self, uid):
+    def remove(self, uid: int) -> None:
         params = self.account, self.folder, uid
-        with self.write_lock:
-            self.conn.execute('DELETE FROM state WHERE account=? and folder=? and uid=?', params)
-            self.conn.commit()
+        self.conn.execute('DELETE FROM state WHERE account=? and folder=? and uid=?', params)
+        self.conn.commit()
 
 
-def parse_dbm_value(value):
+def parse_dbm_value(value: bytes) -> Row:
     uid, key, flags, is_check = nstr(value).split('\t')
     return Row(int(uid), key, flags, is_check == '1')
 
 
-class DBMStateFactory(object):
-    def __init__(self, state_dir):
+class DBMStateFactory:
+    def __init__(self, state_dir: str) -> None:
         self.state_dir = state_dir
-        self._cache = {}
+        self._cache: dict[object, DBMState] = {}
 
-    def get(self, account, folder):
+    def get(self, account: str, folder: str) -> 'DBMState':
         key = account, folder
         try:
             return self._cache[key]
@@ -86,48 +97,50 @@ class DBMStateFactory(object):
         return state
 
 
-class DBMState(object):
-    def __init__(self, state_dir, account, folder):
+class DBMState:
+    def __init__(self, state_dir: str, account: str, folder: str) -> None:
         folder = folder.replace('/', ':')
         self.path = os.path.join(state_dir, '{}-{}.db'.format(account, folder))
-        self.db = gdbm.open(self.path , 'cf')
+        self.db = gdbm.open(self.path, 'cf')
 
-    def get(self, uid):
+    def get(self, uid: int) -> Row | None:
         try:
             return parse_dbm_value(self.db[str(uid)])
         except KeyError:
             pass
+        return None
 
-    def _iteruids(self):
+    def _iteruids(self) -> Iterator[bytes]:
         db = self.db
         uid = db.firstkey()
-        while uid != None:
+        while uid is not None:
             yield uid
             uid = db.nextkey(uid)
 
-    def getall(self):
+    def getall(self) -> Iterator[Row]:
         db = self.db
         for uid in self._iteruids():
             yield parse_dbm_value(db[uid])
 
-    def get_maxuid(self):
+    def get_maxuid(self) -> int:
         try:
             return max(map(int, self._iteruids()))
         except ValueError:
             return 0
 
-    def get_minuid(self):
+    def get_minuid(self) -> int:
         try:
             return min(map(int, self._iteruids()))
         except ValueError:
             return 0
 
-    def put(self, uid, msgkey, flags, is_check=0):
-        self.db[str(uid)] = bstr('{}\t{}\t{}\t{}'.format(uid, msgkey, flags or '',
-            '1' if is_check else '0'))
+    def put(self, uid: int, msgkey: str, flags: str, is_check: bool = False) -> None:
+        self.db[str(uid)] = '{}\t{}\t{}\t{}'.format(
+            uid, msgkey, flags or '', '1' if is_check else '0'
+        ).encode()
         self.db.sync()
 
-    def remove(self, uid, sync=True):
+    def remove(self, uid: int, sync: bool = True) -> None:
         try:
             del self.db[str(uid)]
             if sync:
@@ -135,8 +148,11 @@ class DBMState(object):
         except KeyError:
             pass
 
-    def remove_many(self, uids):
+    def remove_many(self, uids: list[int]) -> None:
         for uid in uids:
             self.remove(uid, False)
 
         self.db.sync()
+
+
+State = DBMState

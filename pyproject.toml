@@ -1,0 +1,16 @@
+[tool.mypy]
+python_version = "3.14"
+strict = true
+packages = ["norless"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+[tool.ruff.lint]
+ignore = ["E731", "E402"]

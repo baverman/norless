@@ -1,45 +1,65 @@
+from __future__ import annotations
+
 import time
 import re
 from configparser import ConfigParser
 import os.path
 
+from dataclasses import dataclass
+from typing import TypedDict, NotRequired
+
 from .imap import ImapBox
+from .state import State, DBMStateFactory
+from .utils import FileLockT
 
 SYNC_RE = re.compile('->')
 
-class Sync(object):
-    def __init__(self, account, folder, maildir, trash=None):
-        self.account = account
-        self.folder = folder
-        self.maildir = maildir
-        self.trash = trash or 'Trash'
 
-    def __repr__(self):
-        return '<Sync:{0.account} {0.folder}>'.format(self)
+class AccountDict(TypedDict):
+    host: str
+    port: int
+    user: str
+    password: str
+    debug: int
+    from_addr: str
+    cafile: NotRequired[str]
+    xoauth2: NotRequired[XOauth2Holder]
 
 
+@dataclass(frozen=True)
 class Maildir(object):
-    def __init__(self, name, path, sync_new=False):
-        self.name = name
-        self.path = path
-        self.sync_new = sync_new
+    name: str
+    path: str
+    sync_new: bool = False
 
 
-class XOauth2Holder(object):
-    def __init__(self, state_dir, account, client_id, secret, refresh_token):
+@dataclass
+class Sync:
+    account: str
+    folder: str
+    maildir: Maildir
+    trash: str = 'Trash'
+
+
+class XOauth2Holder:
+    def __init__(
+        self, state_dir: str, account: str, client_id: str, secret: str, refresh_token: str
+    ):
         self.fname = os.path.join(state_dir, account + '.token')
         self.client_id = client_id
         self.secret = secret
         self.refresh_token = refresh_token
 
-    def _cached_token(self):
+    def _cached_token(self) -> str | None:
         if os.path.exists(self.fname) and os.path.getctime(self.fname) > time.time():
             return open(self.fname).read()
+        return None
 
-    def get_token(self):
+    def get_token(self) -> str:
         token = self._cached_token()
         if not token:
             from . import gmail
+
             info = gmail.refresh_token(self.client_id, self.secret, self.refresh_token)
             token = info['access_token']
             expire = time.time() + info['expires_in'] * 0.9
@@ -50,29 +70,29 @@ class XOauth2Holder(object):
         return token
 
 
-class IniSmtpConfig(object):
-    def __init__(self, fname):
-        self.accounts = {}
-        self.maildirs = {}
-        self.sync_list = []
+class IniSmtpConfig:
+    def __init__(self, fname: str) -> None:
+        self.accounts: dict[str, AccountDict] = {}
+        self.maildirs: dict[str, Maildir] = {}
+        self.sync_list: list[Sync] = []
 
         config = ConfigParser(
-            {'smtp_port': '587', 'debug': '0', 'password': '',
-             'timeout': '5', 'xoauth2': 'no'})
+            {'smtp_port': '587', 'debug': '0', 'password': '', 'timeout': '5', 'xoauth2': 'no'}
+        )
 
         config.read(fname)
         self.parse(config)
 
-    def parse(self, config):
+    def parse(self, config: ConfigParser) -> None:
         self.state_dir = os.path.expanduser(config.get('norless', 'state_dir'))
         self.timeout = config.getint('norless', 'timeout')
         self.parse_accounts(config)
 
-    def parse_accounts(self, config):
+    def parse_accounts(self, config: ConfigParser) -> None:
         for s in config.sections():
             if s.startswith('account'):
                 _, account = s.split()[:2]
-                acc = {
+                acc: AccountDict = {
                     'host': config.get(s, 'smtp_host'),
                     'port': config.getint(s, 'smtp_port'),
                     'user': config.get(s, 'user'),
@@ -85,28 +105,46 @@ class IniSmtpConfig(object):
                     acc['cafile'] = os.path.expanduser(cafile)
 
                 if config.getboolean(s, 'xoauth2'):
-                    acc['xoauth2'] = XOauth2Holder(self.state_dir, account,
-                                                   config.get(s, 'xoauth2_client_id'),
-                                                   config.get(s, 'xoauth2_secret'),
-                                                   config.get(s, 'xoauth2_refresh'))
+                    acc['xoauth2'] = XOauth2Holder(
+                        self.state_dir,
+                        account,
+                        config.get(s, 'xoauth2_client_id'),
+                        config.get(s, 'xoauth2_secret'),
+                        config.get(s, 'xoauth2_refresh'),
+                    )
 
                 self.accounts[account] = acc
 
 
-class IniConfig(object):
-    def __init__(self, fname):
-        self.accounts = {}
-        self.maildirs = {}
-        self.sync_list = []
+class IniConfig:
+    quiet: bool
+    app_lock: FileLockT
+    one_thread: bool
 
-        config = ConfigParser({'port': '0', 'fetch_last': '500',
-            'ssl':'yes', 'timeout': '5', 'debug': '0',
-            'sync_new': 'no', 'xoauth2': 'no', 'password': ''})
+    def __init__(self, fname: str) -> None:
+        self.accounts: dict[str, ImapBox] = {}
+        self.maildirs: dict[str, Maildir] = {}
+        self.sync_list: list[Sync] = []
+
+        config = ConfigParser(
+            {
+                'port': '0',
+                'fetch_last': '500',
+                'ssl': 'yes',
+                'timeout': '5',
+                'debug': '0',
+                'sync_new': 'no',
+                'xoauth2': 'no',
+                'password': '',
+            }
+        )
 
         config.read(fname)
         self.parse(config)
 
-    def parse(self, config):
+        self.state_factory = DBMStateFactory(self.state_dir)
+
+    def parse(self, config: ConfigParser) -> None:
         self.state_dir = os.path.expanduser(config.get('norless', 'state_dir'))
         self.fetch_last = config.getint('norless', 'fetch_last')
         self.timeout = config.getint('norless', 'timeout')
@@ -114,7 +152,7 @@ class IniConfig(object):
         self.parse_maildirs(config)
         self.parse_accounts(config)
 
-    def parse_accounts(self, config):
+    def parse_accounts(self, config: ConfigParser) -> None:
         for s in config.sections():
             if s.startswith('account'):
                 _, account = s.split()[:2]
@@ -130,12 +168,15 @@ class IniConfig(object):
                     cafile = os.path.expanduser(cafile)
                 debug = config.getint(s, 'debug')
 
-                xoauth2 = {}
+                xoauth2: XOauth2Holder | None = None
                 if config.getboolean(s, 'xoauth2'):
-                    xoauth2 = XOauth2Holder(self.state_dir, account,
-                                            config.get(s, 'xoauth2_client_id'),
-                                            config.get(s, 'xoauth2_secret'),
-                                            config.get(s, 'xoauth2_refresh'))
+                    xoauth2 = XOauth2Holder(
+                        self.state_dir,
+                        account,
+                        config.get(s, 'xoauth2_client_id'),
+                        config.get(s, 'xoauth2_secret'),
+                        config.get(s, 'xoauth2_refresh'),
+                    )
 
                 acc = ImapBox(host, user, password, port, ssl, fingerprint, cafile, debug, xoauth2)
                 acc.name = account
@@ -148,9 +189,10 @@ class IniConfig(object):
                     for sp in sync.split('|'):
                         folder, maildir = SYNC_RE.split(sp)
                         self.sync_list.append(
-                            Sync(account, folder.strip(), self.maildirs[maildir.strip()], trash))
+                            Sync(account, folder.strip(), self.maildirs[maildir.strip()], trash)
+                        )
 
-    def parse_maildirs(self, config):
+    def parse_maildirs(self, config: ConfigParser) -> None:
         for s in config.sections():
             if s.startswith('maildir'):
                 _, maildir = s.split()[:2]
@@ -158,6 +200,9 @@ class IniConfig(object):
                 sync_new = config.getboolean(s, 'sync_new')
                 self.maildirs[maildir] = Maildir(maildir, path, sync_new)
 
-    def restrict_to(self, account):
+    def restrict_to(self, account: str) -> None:
         self.accounts = {k: v for k, v in self.accounts.items() if k == account}
         self.sync_list = [r for r in self.sync_list if r.account == account]
+
+    def get_state(self, account: str, folder: str) -> State:
+        return self.state_factory.get(account, folder)

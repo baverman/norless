@@ -8,26 +8,27 @@ import smtplib
 from base64 import b64encode
 
 from .config import IniSmtpConfig
-from .utils import bstr, nstr
+from .utils import nstr
 
 
-def encode_token(user, token):
-    return nstr(b64encode(bstr('user={}\x01auth=Bearer {}\x01\x01'.format(user, token))))
+def encode_token(user: str, token: str) -> str:
+    return nstr(b64encode('user={}\x01auth=Bearer {}\x01\x01'.format(user, token).encode()))
 
 
-def send(config, from_addr, recipients, msg):
+def send(config: IniSmtpConfig, from_addr: str, recipients: list[str], msg: bytes) -> None:
     for cfg in config.accounts.values():
         if cfg['from_addr'] == from_addr:
             break
     else:
-        print('Can\'t find mailer for {} address'.format(args.from_addr), file=sys.stderr)
+        print("Can't find mailer for {} address".format(args.from_addr), file=sys.stderr)
         sys.exit(1)
 
     client = smtplib.SMTP(cfg['host'], cfg['port'], timeout=config.timeout)
     client.starttls()
     if cfg.get('xoauth2'):
-        (code, resp) = client.docmd("AUTH",
-                'XOAUTH2 ' + encode_token(cfg['user'], cfg['xoauth2'].get_token()))
+        (code, resp) = client.docmd(
+            'AUTH', 'XOAUTH2 ' + encode_token(cfg['user'], cfg['xoauth2'].get_token())
+        )
         if code not in (235, 503):
             # 235 == 'Authentication successful'
             # 503 == 'Error: already authenticated'
@@ -37,21 +38,17 @@ def send(config, from_addr, recipients, msg):
     client.sendmail(from_addr, recipients, msg)
 
 
-def get_mailer(config, from_addr):
-    for acc in config.accounts.values():
-        if acc.from_addr == from_addr:
-            return acc
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-f', '--from', dest='from_addr', metavar='address', help='from address')
 
     parser.add_argument('recipient', nargs='+')
 
-    parser.add_argument('--config',
+    parser.add_argument(
+        '--config',
         default=os.path.expanduser('~/.config/norlessrc'),
-        help='path to config file (%(default)s)')
+        help='path to config file (%(default)s)',
+    )
 
     args = parser.parse_args()
 

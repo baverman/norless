@@ -11,16 +11,19 @@ from mailbox import MaildirMessage
 from email.utils import parseaddr
 
 from .utils import FileLock
-from .maildir import Maildir
-from .config import IniConfig
-from .state import DBMStateFactory
+from .maildir import Maildir, MaildirMessage as NLMaildirMessage
+from .config import IniConfig, Maildir as MaildirConfig, Sync
+from .state import State
 
 get_maildir_lock = threading.Lock()
 log = logging.getLogger('norless')
 
+Flags = tuple[str, ...]
 
-maildir_cache = {}
-def get_maildir(maildir):
+maildir_cache: dict[str, Maildir] = {}
+
+
+def get_maildir(maildir: MaildirConfig) -> Maildir:
     with get_maildir_lock:
         key = os.path.expanduser(maildir.path)
         try:
@@ -32,24 +35,26 @@ def get_maildir(maildir):
         return result
 
 
-def store_message(maildir, state, uid, message, flags):
+def store_message(
+    maildir: Maildir, state: State, uid: str, message: bytes, flags: tuple[str, ...]
+) -> None:
     msg = MaildirMessage(message)
     if '\\Seen' in flags:
         msg.add_flag('S')
 
-    flags = msg.get_flags()
+    mflags = msg.get_flags()
 
-    uid = int(uid)
-    s = state.get(uid)
+    iuid = int(uid)
+    s = state.get(iuid)
     if s:
-        if s.flags != flags:
-            maildir.set_flags(s.msgkey, flags)
+        if s.flags != mflags:
+            maildir.set_flags(s.msgkey, mflags)
     else:
-        key = maildir.add(msg, flags)
-        state.put(uid, key, flags)
+        key = maildir.add(msg, mflags)
+        state.put(iuid, key, mflags)
 
 
-def get_maildir_changes(maildir, state):
+def get_maildir_changes(maildir: Maildir, state: State) -> tuple[list[int], list[int]]:
     seen = []
     trash = []
     for row in state.getall():
@@ -66,7 +71,7 @@ def get_maildir_changes(maildir, state):
     return seen, trash
 
 
-def sync_account(config, sync_list):
+def sync_account(config: IniConfig, sync_list: list[Sync]) -> None:
     try:
         for s in sync_list:
             account = config.accounts[s.account]
@@ -84,24 +89,24 @@ def sync_account(config, sync_list):
                 new_messages = [r for r in state.getall() if not r.flags]
                 messages_to_check = []
 
-                for m in new_messages:
-                    if m.msgkey in maildir:
-                        messages_to_check.append(m)
+                for nm in new_messages:
+                    if nm.msgkey in maildir:
+                        messages_to_check.append(nm)
 
                 if messages_to_check:
                     flags = folder.get_flags([r.uid for r in messages_to_check])
-                    for m in messages_to_check:
-                        if m.uid not in flags:
-                            maildir.discard(m.msgkey)
-                            state.remove(m.uid)
-                        elif '\\Seen' in flags[m.uid]:
-                            maildir.add_flags(m.msgkey, 'S')
-                            state.put(m.uid, m.msgkey, maildir.get_flags(m.msgkey))
-    except:
+                    for mc in messages_to_check:
+                        if mc.uid not in flags:
+                            maildir.discard(mc.msgkey)
+                            state.remove(mc.uid)
+                        elif '\\Seen' in flags[mc.uid]:
+                            maildir.add_flags(mc.msgkey, 'S')
+                            state.put(mc.uid, mc.msgkey, maildir.get_flags(mc.msgkey))
+    except Exception:
         log.exception('Error during processing account %s %s', s.account, s.folder)
 
 
-def remote_sync_account(config, sync_list):
+def remote_sync_account(config: IniConfig, sync_list: list[Sync]) -> None:
     for sr in sync_list:
         account = config.accounts[sr.account]
         maildir = get_maildir(sr.maildir)
@@ -116,8 +121,8 @@ def remote_sync_account(config, sync_list):
                 if s:
                     flags = set(s.flags)
                     flags.add('S')
-                    flags = ''.join(flags)
-                    state.put(s.uid, s.msgkey, flags, s.is_check)
+                    sflags = ''.join(flags)
+                    state.put(s.uid, s.msgkey, sflags, s.is_check)
 
         if trash:
             folder = account.get_folder(sr.folder)
@@ -125,13 +130,12 @@ def remote_sync_account(config, sync_list):
             state.remove_many(trash)
 
         if (seen or trash) and not config.quiet:
-            print('{}: seen {}, trash {}'.format(sr.account,
-                len(seen), len(trash)))
+            print('{}: seen {}, trash {}'.format(sr.account, len(seen), len(trash)))
 
 
-def do_remote_sync(config):
+def do_remote_sync(config: IniConfig) -> None:
     with config.app_lock(True):
-        accounts = {}
+        accounts: dict[str, list[Sync]] = {}
         for s in config.sync_list:
             accounts.setdefault(s.account, []).append(s)
 
@@ -139,9 +143,9 @@ def do_remote_sync(config):
             remote_sync_account(config, sync_list)
 
 
-def do_sync(config):
+def do_sync(config: IniConfig) -> None:
     with config.app_lock():
-        accounts = {}
+        accounts: dict[str, list[Sync]] = {}
         for s in config.sync_list:
             accounts.setdefault(s.account, []).append(s)
 
@@ -151,8 +155,7 @@ def do_sync(config):
         else:
             threads = []
             for sync_list in accounts.values():
-                t = threading.Thread(target=sync_account,
-                    args=(config, sync_list))
+                t = threading.Thread(target=sync_account, args=(config, sync_list))
 
                 t.start()
                 threads.append(t)
@@ -161,16 +164,16 @@ def do_sync(config):
                 t.join()
 
 
-def do_new(config):
+def do_new(config: IniConfig) -> None:
     with config.app_lock():
-        maildirs = {}
+        maildirs: dict[str, list[Sync]] = {}
         for s in config.sync_list:
             if s.maildir.sync_new:
                 maildirs.setdefault(s.maildir.name, []).append(s)
 
         for sync_list in maildirs.values():
             maildir = get_maildir(sync_list[0].maildir)
-            state_keys = set()
+            state_keys = set[str]()
             for s in sync_list:
                 state = config.get_state(s.account, s.folder)
                 state_keys.update(r.msgkey for r in state.getall())
@@ -179,7 +182,7 @@ def do_new(config):
             new_messages = maildir_keys - state_keys
 
             if new_messages:
-                addr_messages = {}
+                addr_messages: dict[str, list[NLMaildirMessage]] = {}
                 for msgkey in new_messages:
                     msg = maildir[msgkey]
                     addr = parseaddr(msg['From'])[1]
@@ -207,10 +210,10 @@ def do_new(config):
                         state.put(uid, msgkey, 'S')
 
 
-def do_check(config):
+def do_check(config: IniConfig) -> None:
     maildirs = set(s.maildir for s in config.sync_list)
 
-    result = Counter()
+    result = Counter[str]()
     for cmaildir in maildirs:
         maildir = get_maildir(cmaildir)
         for _, flags in maildir.iterflags():
@@ -224,56 +227,88 @@ def do_check(config):
         sys.exit(1)
 
 
-def do_show_folders(config):
+def do_show_folders(config: IniConfig) -> None:
     for account, box in config.accounts.items():
         print(account)
         for f, s, name in box.list_folders():
             if '&' in name:
-                lname = ' ({})'.format(name.replace('&', '+').replace(',', '/')
-                    .decode('utf-7').encode('utf-8'))
+                lname = ' ({})'.format(
+                    name.replace('&', '+').replace(',', '/').decode('utf-7').encode('utf-8')  # type: ignore[attr-defined]  # TODO
+                )
             else:
                 lname = ''
 
             print('   [{}] {}\t({}){}'.format(s, name, f, lname))
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
+        epilog="""
 commands to get certificates:
     openssl s_client -showcerts -connect host:993 < /dev/null
-    openssl s_client -showcerts -starttls imap -connect host:143 < /dev/null'''
+    openssl s_client -showcerts -starttls imap -connect host:143 < /dev/null""",
     )
-    parser.add_argument('-S', '--sync', dest='do_sync', action='store_true',
-        help='command: sync remote folders to local maildir(s)')
+    parser.add_argument(
+        '-S',
+        '--sync',
+        dest='do_sync',
+        action='store_true',
+        help='command: sync remote folders to local maildir(s)',
+    )
 
-    parser.add_argument('-R', '--remote-sync', dest='do_remote_sync', action='store_true',
-        help='command: sync local changes to remote maildirs')
+    parser.add_argument(
+        '-R',
+        '--remote-sync',
+        dest='do_remote_sync',
+        action='store_true',
+        help='command: sync local changes to remote maildirs',
+    )
 
-    parser.add_argument('-C', '--check', dest='do_check', action='store_true',
-        help='command: check for new messages in local maildir(s)')
+    parser.add_argument(
+        '-C',
+        '--check',
+        dest='do_check',
+        action='store_true',
+        help='command: check for new messages in local maildir(s)',
+    )
 
-    parser.add_argument('-N', '--new', dest='do_new', action='store_true',
-        help='command: sync new messages in maildir(s)')
+    parser.add_argument(
+        '-N',
+        '--new',
+        dest='do_new',
+        action='store_true',
+        help='command: sync new messages in maildir(s)',
+    )
 
-    parser.add_argument('--show-folders', dest='do_show_folders', action='store_true',
-        help='command: list remote folders')
+    parser.add_argument(
+        '--show-folders',
+        dest='do_show_folders',
+        action='store_true',
+        help='command: list remote folders',
+    )
 
-    parser.add_argument('-f', '--config', dest='config',
+    parser.add_argument(
+        '-f',
+        '--config',
+        dest='config',
         default=os.path.expanduser('~/.config/norlessrc'),
-        help='path to config file (%(default)s)')
+        help='path to config file (%(default)s)',
+    )
 
-    parser.add_argument('-a', '--account', dest='account',
-        help='process this account only')
+    parser.add_argument('-a', '--account', dest='account', help='process this account only')
 
-    parser.add_argument('-s', '--run-sequentially', dest='one_thread', action='store_true',
-        help='run actions sequentially in one thread')
+    parser.add_argument(
+        '-s',
+        '--run-sequentially',
+        dest='one_thread',
+        action='store_true',
+        help='run actions sequentially in one thread',
+    )
 
-    parser.add_argument('-q', '--quiet', dest='quiet', action='store_true',
-        help='silent run')
+    parser.add_argument('-q', '--quiet', dest='quiet', action='store_true', help='silent run')
 
-    def get_index(r):
+    def get_index(r: str) -> int:
         try:
             return sys.argv.index(r)
         except ValueError:
@@ -293,14 +328,12 @@ commands to get certificates:
 
     config.app_lock = FileLock(os.path.join(config.state_dir, '.norless-lock'))
 
-    dbm_state = DBMStateFactory(config.state_dir)
-    config.get_state = lambda a, f: dbm_state.get(a, f)
-
     logging.basicConfig(level='ERROR')
 
     commands = []
-    for action in sorted(parser._actions,
-            key=lambda r: min(get_index(opt) for opt in r.option_strings)):
+    for action in sorted(
+        parser._actions, key=lambda r: min(get_index(opt) for opt in r.option_strings)
+    ):
         if action.dest.startswith('do_') and getattr(args, action.dest):
             commands.append(action.dest)
 

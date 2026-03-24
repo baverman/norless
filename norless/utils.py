@@ -2,49 +2,28 @@ import sys
 import fcntl
 import ssl
 
-from time import time as ttime
-from contextlib import contextmanager
+from contextlib import contextmanager, AbstractContextManager
 from email.header import decode_header
 from subprocess import PIPE, Popen
+from typing import Iterator, Protocol
 
 btype = type(b'')
 ntype = type('')
-utype = type(u'')
+utype = type('')
 
 
-def bstr(s, encoding='latin-1'):
-    if type(s) is utype:
-        return s.encode(encoding)
-    return s
-
-
-def nstr(s, encoding='latin-1'):
+def nstr(s: bytes, encoding: str = 'latin-1') -> str:
     t = type(s)
-    if t is not ntype:
+    if t is not ntype:  # type: ignore
         if t is btype:
             return s.decode(encoding)
-        elif t is utype:
-            return s.encode(encoding)
-    return s
+        elif t is utype:  # type: ignore
+            return s.encode(encoding)  # type: ignore
+    return s  # type: ignore
 
 
-def cached_property(func):
-    name = '_' + func.__name__
-    def inner(self):
-        try:
-            return getattr(self, name)
-        except AttributeError:
-            pass
-
-        result = func(self)
-        setattr(self, name, result)
-        return result
-
-    return property(inner)
-
-
-def dheader(header):
-    result = u''
+def dheader(header: str) -> str:
+    result: list[str] = []
     for data, enc in decode_header(header):
         if enc:
             data = data.decode(enc)
@@ -54,22 +33,18 @@ def dheader(header):
             except UnicodeDecodeError:
                 data = data.decode('latin1', 'replace')
 
-        result += data
+        result.append(data)
 
-    return result
-
-
-@contextmanager
-def profileit(msg='profile'):
-    t = ttime()
-    yield
-    print(msg, ttime() - t)
-__builtins__['profileit'] = profileit
+    return ''.join(result)
 
 
-def FileLock(fname):
+class FileLockT(Protocol):
+    def __call__(self, block: bool = False) -> AbstractContextManager[None]: ...
+
+
+def FileLock(fname: str) -> FileLockT:
     @contextmanager
-    def inner(block=False):
+    def inner(block: bool = False) -> Iterator[None]:
         fp = open(fname, 'w')
 
         opts = fcntl.LOCK_EX
@@ -87,7 +62,7 @@ def FileLock(fname):
     return inner
 
 
-def check_cert(data, cafile=None):
+def check_cert(data: bytes, cafile: str | None = None) -> None:
     cmd = ['openssl', 'verify']
     if cafile:
         cmd.extend(('-CAfile', cafile))

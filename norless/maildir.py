@@ -8,10 +8,15 @@ from tempfile import mkstemp
 from os.path import join, exists, isfile, basename
 
 from email.message import Message
-from mailbox import MaildirMessage
+from mailbox import MaildirMessage as _MaildirMessage
+from typing import Dict, Iterator, Tuple
 
 
-def parse_info(info):
+class MaildirMessage(_MaildirMessage):
+    msgkey: str
+
+
+def parse_info(info: str) -> str:
     if info:
         _, _, flags = info.partition(',')
         return flags
@@ -20,7 +25,11 @@ def parse_info(info):
 
 
 class Maildir(object):
-    def __init__(self, path, create=True, msg_mode=0o600, dir_mode=0o700):
+    _toc: dict[str, tuple[str, str]]
+
+    def __init__(
+        self, path: str, create: bool = True, msg_mode: int = 0o600, dir_mode: int = 0o700
+    ) -> None:
         self.path = path
         self.msg_mode = msg_mode
         self.dir_mode = dir_mode
@@ -45,7 +54,7 @@ class Maildir(object):
                         os.mkdir(p, self.dir_mode)
 
     @property
-    def toc(self):
+    def toc(self) -> Dict[str, Tuple[str, str]]:
         try:
             return self._toc
         except AttributeError:
@@ -63,14 +72,14 @@ class Maildir(object):
             self._toc = toc
             return toc
 
-    def _make_tmp_file(self):
+    def _make_tmp_file(self) -> tuple[int, str]:
         now = time()
         self._counter += 1
         prefix = '{}.Q{}P{}'.format(int(now), self._counter, self._pid)
         suffix = '.{}'.format(self._host)
         return mkstemp(suffix, prefix, self.path_tmp)
 
-    def add(self, message, flags=''):
+    def add(self, message: bytes | Message, flags: str = '') -> str:
         with self.lock:
             fd, fpath = self._make_tmp_file()
             msgkey = basename(fpath)
@@ -89,18 +98,18 @@ class Maildir(object):
 
         return msgkey
 
-    def _invalidate(self):
+    def _invalidate(self) -> None:
         with self.lock:
             try:
                 del self._toc
             except AttributeError:
                 pass
 
-    def get_flags(self, key):
+    def get_flags(self, key: str) -> str:
         _, info = self.toc[key]
         return parse_info(info)
 
-    def discard(self, key):
+    def discard(self, key: str) -> None:
         with self.lock:
             try:
                 path, _ = self.toc[key]
@@ -115,7 +124,7 @@ class Maildir(object):
 
             self.toc.pop(key, None)
 
-    def _get_path(self, key, flags):
+    def _get_path(self, key: str, flags: str) -> tuple[str, str]:
         if flags:
             info = ':2,' + flags
         else:
@@ -128,13 +137,13 @@ class Maildir(object):
 
         return join(store_path, key + info), info.lstrip(':')
 
-    def _set_flags(self, key, flags):
+    def _set_flags(self, key: str, flags: str) -> None:
         oldpath, _ = self.toc[key]
         newpath, info = self._get_path(key, flags)
         os.rename(oldpath, newpath)
         self.toc[key] = newpath, info
 
-    def add_flags(self, key, flags):
+    def add_flags(self, key: str, flags: str) -> None:
         with self.lock:
             oldflags = self.get_flags(key)
             added = set(flags) - set(oldflags)
@@ -142,20 +151,20 @@ class Maildir(object):
                 newflags = oldflags + ''.join(added)
                 self._set_flags(key, newflags)
 
-    def set_flags(self, key, flags):
+    def set_flags(self, key: str, flags: str) -> None:
         with self.lock:
             oldflags = set(self.get_flags(key))
             if set(flags) != oldflags:
                 self._set_flags(key, flags)
 
-    def iterflags(self):
+    def iterflags(self) -> Iterator[tuple[str, str]]:
         for key, (_, info) in self.toc.items():
             yield key, parse_info(info)
 
-    def __contains__(self, key):
+    def __contains__(self, key: str) -> bool:
         return key in self.toc
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: str) -> MaildirMessage:
         path, info = self.toc[key]
         msg = MaildirMessage(open(path, 'rb').read())
         msg.set_flags(parse_info(info))
