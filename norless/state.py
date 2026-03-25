@@ -3,7 +3,7 @@ import sqlite3
 from dbm import gnu as gdbm
 
 from .utils import nstr
-from typing import Iterator, NamedTuple
+from typing import Iterator, NamedTuple, Protocol
 
 
 class Row(NamedTuple):
@@ -11,6 +11,15 @@ class Row(NamedTuple):
     msgkey: str
     flags: str
     is_check: bool
+
+
+class State(Protocol):
+    def get(self, uid: int) -> Row | None: ...
+    def put(self, uid: int, msgkey: str, flags: str, is_check: bool = False) -> None: ...
+    def getall(self) -> Iterator[Row]: ...
+    def get_maxuid(self) -> int: ...
+    def get_minuid(self) -> int: ...
+    def remove(self, uids: list[int]) -> None: ...
 
 
 def connect(fname: str) -> sqlite3.Connection:
@@ -82,18 +91,24 @@ def parse_dbm_value(value: bytes) -> Row:
 
 
 class DBMStateFactory:
-    def __init__(self, state_dir: str) -> None:
+    def __init__(self, state_dir: str, state_type: str = 'dbm') -> None:
         self.state_dir = state_dir
-        self._cache: dict[object, DBMState] = {}
+        self.state_type = state_type
+        self._cache: dict[object, State] = {}
 
-    def get(self, account: str, folder: str) -> 'DBMState':
+    def get(self, account: str, folder: str) -> 'State':
         key = account, folder
         try:
             return self._cache[key]
         except KeyError:
             pass
 
-        state = self._cache[key] = DBMState(self.state_dir, account, folder)
+        if self.state_type == 'dbm':
+            state = DBMState(self.state_dir, account, folder)
+        else:
+            raise Exception(f'Unknown state type: {self.state_type}')
+
+        self._cache[key] = state
         return state
 
 
@@ -140,19 +155,11 @@ class DBMState:
         ).encode()
         self.db.sync()
 
-    def remove(self, uid: int, sync: bool = True) -> None:
-        try:
-            del self.db[str(uid)]
-            if sync:
-                self.db.sync()
-        except KeyError:
-            pass
-
-    def remove_many(self, uids: list[int]) -> None:
+    def remove(self, uids: list[int]) -> None:
         for uid in uids:
-            self.remove(uid, False)
+            try:
+                del self.db[str(uid)]
+            except KeyError:
+                pass
 
         self.db.sync()
-
-
-State = DBMState

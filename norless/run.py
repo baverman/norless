@@ -98,7 +98,7 @@ def sync_account(config: IniConfig, sync_list: list[Sync]) -> None:
                     for mc in messages_to_check:
                         if mc.uid not in flags:
                             maildir.discard(mc.msgkey)
-                            state.remove(mc.uid)
+                            state.remove([mc.uid])
                         elif '\\Seen' in flags[mc.uid]:
                             maildir.add_flags(mc.msgkey, 'S')
                             state.put(mc.uid, mc.msgkey, maildir.get_flags(mc.msgkey))
@@ -127,7 +127,7 @@ def remote_sync_account(config: IniConfig, sync_list: list[Sync]) -> None:
         if trash:
             folder = account.get_folder(sr.folder)
             folder.trash(trash, sr.trash)
-            state.remove_many(trash)
+            state.remove(trash)
 
         if (seen or trash) and not config.quiet:
             print('{}: seen {}, trash {}'.format(sr.account, len(seen), len(trash)))
