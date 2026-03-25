@@ -231,12 +231,11 @@ def do_show_folders(config: IniConfig) -> None:
     for account, box in config.accounts.items():
         print(account)
         for f, s, name in box.list_folders():
-            if '&' in name:
-                lname = ' ({})'.format(
-                    name.replace('&', '+').replace(',', '/').decode('utf-7').encode('utf-8')  # type: ignore[attr-defined]  # TODO
-                )
-            else:
+            dname = name.replace('&', '+').replace(',', '/').encode().decode('utf-7')
+            if name == dname:
                 lname = ''
+            else:
+                lname = f' ({dname})'
 
             print('   [{}] {}\t({}){}'.format(s, name, f, lname))
 

@@ -228,8 +228,8 @@ class Folder:
             self.box.client.append(
                 self.box.client._quote(self.name),
                 '(\\Seen)',
-                time.time(),
-                msg.as_bytes(),  # type: ignore[arg-type]
+                time.time(),  # type: ignore[arg-type]
+                msg.as_bytes(),
             )
 
         result = self.box.client.uid('search', '(UID {}:*)'.format(last_uid + 1))
