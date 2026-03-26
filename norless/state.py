@@ -13,6 +13,11 @@ class Row(NamedTuple):
     is_check: bool
 
 
+class Info(NamedTuple):
+    fname: str
+    msgid: str
+
+
 class State(Protocol):
     def get(self, uid: int) -> Row | None: ...
     def put(self, uid: int, msgkey: str, flags: str, is_check: bool = False) -> None: ...
@@ -24,65 +29,86 @@ class State(Protocol):
 
 def connect(fname: str) -> sqlite3.Connection:
     conn = sqlite3.connect(fname)
-    conn.text_factory = str
+    conn.isolation_level = None
+    conn.execute('pragma journal_mode=wal')
+    conn.execute('pragma cache_size=-100000')
+    conn.execute('pragma busy_timeout=10000')
     return conn
 
 
 def create_tables(conn: sqlite3.Connection) -> None:
-    conn.execute("""CREATE TABLE IF NOT EXISTS state(
-        account text,
-        folder text,
-        uid integer,
-        msgkey text,
+    conn.execute("""CREATE TABLE IF NOT EXISTS state (
+        fname text,
+        msgid text,
         flags text,
-        is_check integer,
-        UNIQUE(account, folder, uid, msgkey)
+        PRIMARY KEY (fname, msgid)
     )""")
     conn.commit()
 
 
 class SqliteState:
-    def __init__(self, conn: sqlite3.Connection, account: str, folder: str):
-        self.conn = conn
-        self.account = account
-        self.folder = folder
+    def __init__(self, state_dir: str, account: str, folder: str):
+        folder = folder.replace('/', ':')
+        fname = os.path.join(state_dir, '{}-{}.sqlite'.format(account, folder))
+        self.conn = connect(fname)
+        create_tables(self.conn)
 
-    def get(self, uid: int) -> Row | None:
-        params = self.account, self.folder, uid
+    def by_fname(self, fname: str) -> Info | None:
+        params = (fname,)
         rows = self.conn.execute(
-            """SELECT uid, msgkey, flags, is_check
-            FROM state WHERE account=? and folder=? and uid=?""",
+            'SELECT fname, msgid FROM state WHERE fname=? LIMIT 1',
             params,
-        )
+        ).fetchall()
 
-        result = [Row(*r) for r in rows]
-        if result:
-            if len(result) > 1:
-                raise Exception('Too many rows')
-            else:
-                return result[0]
-        else:
-            return None
+        if rows:
+            return Info(*rows[0])
+        return None
 
-    def getall(self) -> Iterator[Row]:
-        params = self.account, self.folder
-        result = self.conn.execute(
-            """SELECT uid, msgkey, flags, is_check
-            FROM state WHERE account=? and folder=?""",
-            params,
-        )
+    def getall(self) -> list[Info]:
+        result = self.conn.execute('SELECT fname, msgid from state')
+        return [Info(*r) for r in result]
 
-        return (Row(*r) for r in result)
-
-    def put(self, uid: int, msgkey: str, flags: str, is_check: bool = False) -> None:
-        params = self.account, self.folder, uid, msgkey, flags, int(is_check)
-        self.conn.execute("""INSERT OR REPLACE INTO state VALUES (?, ?, ?, ?, ?, ?)""", params)
+    def put(self, fname: str, msgid: str) -> None:
+        params = fname, msgid
+        self.conn.execute('INSERT OR REPLACE INTO state (fname, msgid) VALUES (?, ?)', params)
         self.conn.commit()
 
-    def remove(self, uid: int) -> None:
-        params = self.account, self.folder, uid
-        self.conn.execute('DELETE FROM state WHERE account=? and folder=? and uid=?', params)
-        self.conn.commit()
+    # def get(self, uid: int) -> Row | None:
+    #     params = self.account, self.folder, uid
+    #     rows = self.conn.execute(
+    #         """SELECT uid, msgkey, flags, is_check
+    #         FROM state WHERE account=? and folder=? and uid=?""",
+    #         params,
+    #     )
+    #
+    #     result = [Row(*r) for r in rows]
+    #     if result:
+    #         if len(result) > 1:
+    #             raise Exception('Too many rows')
+    #         else:
+    #             return result[0]
+    #     else:
+    #         return None
+    #
+    # def getall(self) -> Iterator[Row]:
+    #     params = self.account, self.folder
+    #     result = self.conn.execute(
+    #         """SELECT uid, msgkey, flags, is_check
+    #         FROM state WHERE account=? and folder=?""",
+    #         params,
+    #     )
+    #
+    #     return (Row(*r) for r in result)
+    #
+    # def put(self, uid: int, msgkey: str, flags: str, is_check: bool = False) -> None:
+    #     params = self.account, self.folder, uid, msgkey, flags, int(is_check)
+    #     self.conn.execute("""INSERT OR REPLACE INTO state VALUES (?, ?, ?, ?, ?, ?)""", params)
+    #     self.conn.commit()
+    #
+    # def remove(self, uid: int) -> None:
+    #     params = self.account, self.folder, uid
+    #     self.conn.execute('DELETE FROM state WHERE account=? and folder=? and uid=?', params)
+    #     self.conn.commit()
 
 
 def parse_dbm_value(value: bytes) -> Row:

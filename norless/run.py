@@ -7,13 +7,13 @@ import logging
 
 from collections import Counter
 
-from mailbox import MaildirMessage
 from email.utils import parseaddr
 
 from .utils import FileLock
-from .maildir import Maildir, MaildirMessage as NLMaildirMessage
+from .maildir import Maildir, Message
 from .config import IniConfig, Maildir as MaildirConfig, Sync
-from .state import State
+from .state import State, SqliteState
+from .imap import message_id
 
 get_maildir_lock = threading.Lock()
 log = logging.getLogger('norless')
@@ -38,11 +38,10 @@ def get_maildir(maildir: MaildirConfig) -> Maildir:
 def store_message(
     maildir: Maildir, state: State, uid: str, message: bytes, flags: tuple[str, ...]
 ) -> None:
-    msg = MaildirMessage(message)
+    msg = Message(message)
+    mflags = ''
     if '\\Seen' in flags:
-        msg.add_flag('S')
-
-    mflags = msg.get_flags()
+        mflags += 'S'
 
     iuid = int(uid)
     s = state.get(iuid)
@@ -52,6 +51,18 @@ def store_message(
     else:
         key = maildir.add(msg, mflags)
         state.put(iuid, key, mflags)
+
+
+def store_message2(
+    maildir: Maildir, state: SqliteState, message: bytes, flags: tuple[str, ...]
+) -> None:
+    mflags = ''
+    if '\\Seen' in flags:
+        mflags += 'S'
+
+    msg = Message(message)
+    fname = maildir.add(msg, mflags)
+    state.put(fname, message_id(msg))
 
 
 def get_maildir_changes(maildir: Maildir, state: State) -> tuple[list[int], list[int]]:
@@ -69,6 +80,47 @@ def get_maildir_changes(maildir: Maildir, state: State) -> tuple[list[int], list
                 seen.append(row.uid)
 
     return seen, trash
+
+
+def reconcile_account(config: IniConfig, sync_list: list[Sync]) -> None:
+    # TODO: cleanup state from non-existing maildir messages
+    # TODO: set flags for existing maildir messages
+    from .state import SqliteState
+
+    for s in sync_list:
+        print('Reconcile: ', s.account, s.folder, '->', s.maildir.name)
+        account = config.accounts[s.account]
+        maildir = get_maildir(s.maildir)
+        state = SqliteState(config.state_dir, s.account, s.folder)
+
+        infos = state.getall()
+        by_fname = {it.fname: it for it in infos}
+
+        toc = maildir.toc
+        for k, v in toc.items():
+            if k not in by_fname:
+                md_msg = maildir[k]
+                msgid = message_id(md_msg)
+                state.put(k, msgid)
+
+        infos = state.getall()
+        by_msgid = {it.msgid: it for it in infos}
+
+        to_fetch = []
+        folder = account.get_folder(s.folder)
+        found = 0
+        for uid, msgid, flags in folder.allmeta():
+            if msgid not in by_msgid:
+                to_fetch.append(uid)
+            else:
+                found += 1
+
+        print('  Found messages:', found)
+        if to_fetch:
+            print('  Missing messages:', len(to_fetch))
+            folder.select()
+            for msg in folder.fetch_uids(to_fetch):
+                store_message2(maildir, state, msg['body'], msg['flags'])
 
 
 def sync_account(config: IniConfig, sync_list: list[Sync]) -> None:
@@ -164,6 +216,16 @@ def do_sync(config: IniConfig) -> None:
                 t.join()
 
 
+def do_reconcile(config: IniConfig) -> None:
+    with config.app_lock():
+        accounts: dict[str, list[Sync]] = {}
+        for s in config.sync_list:
+            accounts.setdefault(s.account, []).append(s)
+
+        for sync_list in accounts.values():
+            reconcile_account(config, sync_list)
+
+
 def do_new(config: IniConfig) -> None:
     with config.app_lock():
         maildirs: dict[str, list[Sync]] = {}
@@ -182,7 +244,7 @@ def do_new(config: IniConfig) -> None:
             new_messages = maildir_keys - state_keys
 
             if new_messages:
-                addr_messages: dict[str, list[NLMaildirMessage]] = {}
+                addr_messages: dict[str, list[Message]] = {}
                 for msgkey in new_messages:
                     msg = maildir[msgkey]
                     addr = parseaddr(msg['From'])[1]
@@ -242,10 +304,11 @@ def do_show_folders(config: IniConfig) -> None:
 
 ACTIONS = [
     do_show_folders,
+    do_reconcile,
     do_sync,
     do_remote_sync,
     do_check,
-    do_new,
+    # do_new,
 ]
 
 
@@ -294,6 +357,14 @@ commands to get certificates:
     )
 
     parser.add_argument(
+        '--reconcile',
+        dest='actions',
+        action='append_const',
+        const=do_reconcile,
+        help='command: recreate state and fetch missing messages from remote maildirs',
+    )
+
+    parser.add_argument(
         '--show-folders',
         dest='actions',
         action='append_const',
@@ -310,6 +381,7 @@ commands to get certificates:
     )
 
     parser.add_argument('-a', '--account', dest='account', help='process this account only')
+    parser.add_argument('-m', '--maildir', dest='maildir', help='process this maildir only')
 
     parser.add_argument(
         '-s',
@@ -324,8 +396,7 @@ commands to get certificates:
     args = parser.parse_args()
 
     config = IniConfig(args.config)
-    if args.account:
-        config.restrict_to(args.account)
+    config.restrict_to(account=args.account, maildir=args.maildir)
 
     config.one_thread = args.one_thread
     config.quiet = args.quiet

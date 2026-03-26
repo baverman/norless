@@ -5,18 +5,20 @@ import imaplib
 import ssl
 
 from hashlib import sha1
-from mailbox import Message
 from functools import cached_property
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, TypedDict, Iterator
 from ssl import SSLSocket
+from itertools import batched
 
 from .utils import check_cert, nstr
+from .maildir import Message
 
 if TYPE_CHECKING:
     from .config import XOauth2Holder
-    from .maildir import MaildirMessage
 
 LIST_REGEX = re.compile(rb'\((?P<flags>.*?)\) "(?P<sep>.*)" (?P<name>.*)')
+
+ImapList = list[None] | list[bytes | tuple[bytes, bytes]]
 
 
 class MsgDict(TypedDict):
@@ -129,6 +131,24 @@ class ImapBox:
             self.selected_folder = name
 
 
+def message_id(msg: Message) -> str:
+    msg_id = msg.get('message-id')
+    if not msg_id:
+        hsh = sha1(f'{msg["date"]}:{msg["from"]}:{msg["to"]}:{msg["subject"]}'.encode()).hexdigest()
+        msg_id = f'<{hsh}@generated-missing>'
+    return msg_id
+
+
+def iter_result(imap_list: ImapList) -> Iterator[tuple[bytes, bytes]]:
+    if imap_list and imap_list[0] == None:
+        return
+
+    it: Iterator[tuple[bytes, bytes]] = iter(imap_list)  # type: ignore[arg-type]
+    for info, body in it:
+        yield info, body
+        next(it)
+
+
 class Folder:
     def __init__(self, box: ImapBox, name: str) -> None:
         self.box = box
@@ -158,8 +178,6 @@ class Folder:
         self.box.select(self.name)
 
     def trash(self, uids: list[int], trash_folder: str) -> None:
-        # import logging
-        # logging.error('TRASH %s %s', self.name, uids)
         suids = ','.join(map(str, uids))
         self.select()
         self.box.client.uid('COPY', suids, trash_folder)
@@ -171,38 +189,60 @@ class Folder:
         self.select()
         self.box.client.uid('STORE', suids, '+FLAGS', '(\\Seen)')
 
-    def fetch(self, last_n: int | None = None, last_uid: int | None = None) -> list[MsgDict]:
-        assert last_n or last_uid
+    def allmeta(self) -> Iterator[tuple[int, str, tuple[str, ...]]]:
         self.select()
-        result_messages = []
+        result = self.box.client.fetch(
+            '1:*', '(UID FLAGS BODY.PEEK[HEADER.FIELDS (MESSAGE-ID DATE FROM TO SUBJECT)])'
+        )
+        # broken = []
+        for info, body in iter_result(result[1]):
+            uid = get_field(info, 'UID')
+            flags = tuple(map(nstr, imaplib.ParseFlags(info)))
+            msg = Message(body.replace(b'\r\n', b'\n'))
+            # if message_id(msg)[0] != '<':
+            #     broken.append(int(uid))
+            yield int(uid), message_id(msg), flags
+
+        # if broken:
+        #     print('  Cleanup:', len(broken))
+        #     suids = ','.join(map(str, broken))
+        #     self.box.client.uid('STORE', suids, '+FLAGS', '(\\Deleted)')
+        #     self.box.client.expunge()
+
+    def fetch(self, last_n: int, last_uid: int) -> Iterator[MsgDict]:
+        self.select()
 
         if last_uid:
-            result = self.box.client.uid('search', '(UID {}:*)'.format(last_uid + 1))
-            uids: list[bytes] = [r for r in result[1][0].split() if int(r) > last_uid]
-            if not uids:
-                return []
-
-            result = self.box.client.uid(
-                'fetch', b','.join(uids).decode(), '(UID FLAGS BODY.PEEK[])'
-            )
-        elif last_n:
+            new_uids_result = self.box.client.uid('search', '(UID {}:*)'.format(last_uid + 1))
+            uids: list[int] = [int(r) for r in new_uids_result[1][0].split() if int(r) > last_uid]
+            yield from self.fetch_uids(uids)
+        else:
             if not self.total:
-                return []
+                return
 
             start, end = max(self.total - last_n, 1), self.total
             result = self.box.client.fetch('{}:{}'.format(start, end), '(UID FLAGS BODY.PEEK[])')
 
-        it = iter(result[1])
-        for info, msg in it:
+            yield from self._iter_fetch(result[1])
+
+    def fetch_uids(self, uids: list[int]) -> Iterator[MsgDict]:
+        if not uids:
+            return
+
+        for batch in batched(uids, 100):
+            result = self.box.client.uid(
+                'fetch', ','.join(map(str, batch)), '(UID FLAGS BODY.PEEK[])'
+            )
+            yield from self._iter_fetch(result[1])
+
+    def _iter_fetch(self, imap_list: ImapList) -> Iterator[MsgDict]:
+        for info, msg in iter_result(imap_list):
             r: MsgDict = {
                 'uid': get_field(info, 'UID'),
                 'flags': tuple(map(nstr, imaplib.ParseFlags(info))),
                 'body': msg.replace(b'\r\n', b'\n'),
             }
-            result_messages.append(r)
-            next(it)
-
-        return result_messages
+            yield r
 
     def get_flags(self, uids: list[int]) -> dict[int, tuple[str, ...]]:
         result = self.box.client.uid('fetch', ','.join(map(str, uids)), '(UID FLAGS)')
@@ -214,9 +254,7 @@ class Folder:
 
         return flags
 
-    def append_messages(
-        self, messages: list[MaildirMessage], last_uid: int
-    ) -> list[tuple[int, str]]:
+    def append_messages(self, messages: list[Message], last_uid: int) -> list[tuple[int, str]]:
         self.select()
         for msg in messages:
             del msg['X-Norless-Id']

@@ -200,9 +200,14 @@ class IniConfig:
                 sync_new = config.getboolean(s, 'sync_new')
                 self.maildirs[maildir] = Maildir(maildir, path, sync_new)
 
-    def restrict_to(self, account: str) -> None:
-        self.accounts = {k: v for k, v in self.accounts.items() if k == account}
-        self.sync_list = [r for r in self.sync_list if r.account == account]
+    def restrict_to(self, *, account: str | None, maildir: str | None) -> None:
+        self.accounts = {k: v for k, v in self.accounts.items() if account is None or k == account}
+        self.sync_list = [
+            r
+            for r in self.sync_list
+            if (account is None or r.account == account)
+            and (maildir is None or r.maildir.name == maildir)
+        ]
 
     def get_state(self, account: str, folder: str) -> State:
         return self.state_factory.get(account, folder)

@@ -7,13 +7,21 @@ from threading import RLock
 from tempfile import mkstemp
 from os.path import join, exists, isfile, basename
 
-from email.message import Message
-from mailbox import MaildirMessage as _MaildirMessage
+from email.message import Message as EmailMessage
+from mailbox import Message as _Message
 from typing import Dict, Iterator, Tuple
 
 
-class MaildirMessage(_MaildirMessage):
+class Message(_Message):
     msgkey: str
+    size: int
+
+    def __init__(self, data: bytes, size: int | None = None) -> None:
+        super().__init__(data)
+        if size is not None:
+            self.size = size
+        else:
+            self.size = len(data)
 
 
 def parse_info(info: str) -> str:
@@ -79,12 +87,12 @@ class Maildir(object):
         suffix = '.{}'.format(self._host)
         return mkstemp(suffix, prefix, self.path_tmp)
 
-    def add(self, message: bytes | Message, flags: str = '') -> str:
+    def add(self, message: bytes | EmailMessage, flags: str = '') -> str:
         with self.lock:
             fd, fpath = self._make_tmp_file()
             msgkey = basename(fpath)
 
-            if isinstance(message, Message):
+            if isinstance(message, EmailMessage):
                 message = message.as_bytes()
 
             os.write(fd, message)
@@ -164,9 +172,9 @@ class Maildir(object):
     def __contains__(self, key: str) -> bool:
         return key in self.toc
 
-    def __getitem__(self, key: str) -> MaildirMessage:
+    def __getitem__(self, key: str) -> Message:
         path, info = self.toc[key]
-        msg = MaildirMessage(open(path, 'rb').read())
-        msg.set_flags(parse_info(info))
+        msg = Message(open(path, 'rb').read())
+        # msg.set_flags(parse_info(info))
         msg.msgkey = key
         return msg
