@@ -240,6 +240,15 @@ def do_show_folders(config: IniConfig) -> None:
             print('   [{}] {}\t({}){}'.format(s, name, f, lname))
 
 
+ACTIONS = [
+    do_show_folders,
+    do_sync,
+    do_remote_sync,
+    do_check,
+    do_new,
+]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -251,39 +260,44 @@ commands to get certificates:
     parser.add_argument(
         '-S',
         '--sync',
-        dest='do_sync',
-        action='store_true',
+        dest='actions',
+        action='append_const',
+        const=do_sync,
         help='command: sync remote folders to local maildir(s)',
     )
 
     parser.add_argument(
         '-R',
         '--remote-sync',
-        dest='do_remote_sync',
-        action='store_true',
+        dest='actions',
+        action='append_const',
+        const=do_remote_sync,
         help='command: sync local changes to remote maildirs',
     )
 
     parser.add_argument(
         '-C',
         '--check',
-        dest='do_check',
-        action='store_true',
+        dest='actions',
+        action='append_const',
+        const=do_check,
         help='command: check for new messages in local maildir(s)',
     )
 
     parser.add_argument(
         '-N',
         '--new',
-        dest='do_new',
-        action='store_true',
+        dest='actions',
+        action='append_const',
+        const=do_new,
         help='command: sync new messages in maildir(s)',
     )
 
     parser.add_argument(
         '--show-folders',
-        dest='do_show_folders',
-        action='store_true',
+        dest='actions',
+        action='append_const',
+        const=do_show_folders,
         help='command: list remote folders',
     )
 
@@ -307,12 +321,6 @@ commands to get certificates:
 
     parser.add_argument('-q', '--quiet', dest='quiet', action='store_true', help='silent run')
 
-    def get_index(r: str) -> int:
-        try:
-            return sys.argv.index(r)
-        except ValueError:
-            return 9999
-
     args = parser.parse_args()
 
     config = IniConfig(args.config)
@@ -329,15 +337,9 @@ commands to get certificates:
 
     logging.basicConfig(level='ERROR')
 
-    commands = []
-    for action in sorted(
-        parser._actions, key=lambda r: min(get_index(opt) for opt in r.option_strings)
-    ):
-        if action.dest.startswith('do_') and getattr(args, action.dest):
-            commands.append(action.dest)
-
-    for command in commands:
-        globals()[command](config)
+    for cmd in ACTIONS:
+        if cmd in args.actions:
+            cmd(config)
 
 
 if __name__ == '__main__':
