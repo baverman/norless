@@ -108,7 +108,7 @@ def reconcile_account(config: IniConfig, s: Sync) -> None:
     to_fetch = []
     folder = account.get_folder(s.folder)
     found = 0
-    for uid, msgid, flags in folder.info():
+    for uid, msgid, flags, _ in folder.info():
         if msgid not in by_msgid:
             to_fetch.append(uid)
         else:
@@ -144,7 +144,7 @@ def sync_account_box(config: IniConfig, s: Sync) -> None:
         to_seen = []
         to_fetch = []
 
-        for uid, msgid, _flags in folder.info(unseen_uids):
+        for uid, msgid, _flags, _msg in folder.info(unseen_uids):
             if msgid not in by_msgid:
                 to_fetch.append(uid)
             elif toc_entry := toc.get(by_msgid[msgid].fname):
@@ -168,11 +168,12 @@ def sync_account_box(config: IniConfig, s: Sync) -> None:
     to_delete = []
     to_discard = []
     if deleted_msgid:
-        for uid, msgid, _flags in folder.info(recent=500):
+        for uid, msgid, _flags, _msg in folder.info(recent=500):
             if msgid in deleted_msgid:
                 to_delete.append(uid)
                 to_discard.extend(deleted_msgid[msgid])
 
+    # print(s.account, s.folder, to_delete, to_discard)
     if to_delete:
         folder.delete(to_delete)
 

@@ -6,7 +6,7 @@ import ssl
 
 from hashlib import sha1
 from functools import cached_property
-from typing import TYPE_CHECKING, TypedDict, Iterator
+from typing import TYPE_CHECKING, TypedDict, Iterator, NamedTuple
 from ssl import SSLSocket
 from itertools import batched
 
@@ -19,6 +19,13 @@ if TYPE_CHECKING:
 LIST_REGEX = re.compile(rb'\((?P<flags>.*?)\) "(?P<sep>.*)" (?P<name>.*)')
 
 ImapList = list[None] | list[bytes | tuple[bytes, bytes]]
+
+
+class Info(NamedTuple):
+    uid: int
+    msgid: str
+    flags: tuple[str, ...]
+    msg: Message
 
 
 class MsgDict(TypedDict):
@@ -194,9 +201,7 @@ class Folder:
         self.select()
         self.box.client.uid('STORE', suids, '+FLAGS', '(\\Seen)')
 
-    def info(
-        self, uids: list[int] | None = None, recent: int | None = None
-    ) -> Iterator[tuple[int, str, tuple[str, ...]]]:
+    def info(self, uids: list[int] | None = None, recent: int | None = None) -> Iterator[Info]:
         self.select()
         request = '(UID FLAGS BODY.PEEK[HEADER.FIELDS (MESSAGE-ID DATE FROM TO SUBJECT)])'
 
@@ -215,7 +220,7 @@ class Folder:
             msg = Message(body.replace(b'\r\n', b'\n'))
             # if message_id(msg)[0] != '<':
             #     broken.append(int(uid))
-            yield int(uid), message_id(msg), flags
+            yield Info(int(uid), message_id(msg), flags, msg)
 
         # if broken:
         #     print('  Cleanup:', len(broken))
