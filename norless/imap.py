@@ -140,7 +140,7 @@ def message_id(msg: Message) -> str:
 
 
 def iter_result(imap_list: ImapList) -> Iterator[tuple[bytes, bytes]]:
-    if imap_list and imap_list[0] == None:
+    if imap_list and imap_list[0] is None:
         return
 
     it: Iterator[tuple[bytes, bytes]] = iter(imap_list)  # type: ignore[arg-type]
@@ -184,16 +184,30 @@ class Folder:
         self.box.client.uid('STORE', suids, '+FLAGS', '(\\Deleted)')
         self.box.client.expunge()
 
+    def delete(self, uids: list[int]) -> None:
+        self.select()
+        suids = ','.join(map(str, uids))
+        self.box.client.uid('STORE', suids, '+FLAGS', '(\\Deleted)')
+
     def seen(self, uids: list[int]) -> None:
         suids = ','.join(map(str, uids))
         self.select()
         self.box.client.uid('STORE', suids, '+FLAGS', '(\\Seen)')
 
-    def allmeta(self) -> Iterator[tuple[int, str, tuple[str, ...]]]:
+    def info(
+        self, uids: list[int] | None = None, recent: int | None = None
+    ) -> Iterator[tuple[int, str, tuple[str, ...]]]:
         self.select()
-        result = self.box.client.fetch(
-            '1:*', '(UID FLAGS BODY.PEEK[HEADER.FIELDS (MESSAGE-ID DATE FROM TO SUBJECT)])'
-        )
+        request = '(UID FLAGS BODY.PEEK[HEADER.FIELDS (MESSAGE-ID DATE FROM TO SUBJECT)])'
+
+        if uids is not None:
+            result = self.box.client.uid('fetch', ','.join(map(str, uids)), request)
+        elif recent is not None:
+            start, end = max(self.total - recent, 1), self.total
+            result = self.box.client.fetch(f'{start}:{end}', request)
+        else:
+            result = self.box.client.fetch('1:*', request)
+
         # broken = []
         for info, body in iter_result(result[1]):
             uid = get_field(info, 'UID')
@@ -293,3 +307,8 @@ class Folder:
                 next(it)
 
         return stored_messages
+
+    def unseen_uids(self) -> list[int]:
+        self.select()
+        resp = self.box.client.uid('search', 'UNSEEN')
+        return [int(r) for r in resp[1][0].split()]

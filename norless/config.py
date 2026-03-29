@@ -202,6 +202,7 @@ class IniConfig:
 
     def restrict_to(self, *, account: str | None, maildir: str | None) -> None:
         self.accounts = {k: v for k, v in self.accounts.items() if account is None or k == account}
+        self.maildirs = {k: v for k, v in self.maildirs.items() if maildir is None or k == maildir}
         self.sync_list = [
             r
             for r in self.sync_list
@@ -211,3 +212,9 @@ class IniConfig:
 
     def get_state(self, account: str, folder: str) -> State:
         return self.state_factory.get(account, folder)
+
+    def sync_by_account(self) -> dict[str, list[Sync]]:
+        result: dict[str, list[Sync]] = {}
+        for s in self.sync_list:
+            result.setdefault(s.account, []).append(s)
+        return result

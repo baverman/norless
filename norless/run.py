@@ -82,80 +82,102 @@ def get_maildir_changes(maildir: Maildir, state: State) -> tuple[list[int], list
     return seen, trash
 
 
-def reconcile_account(config: IniConfig, sync_list: list[Sync]) -> None:
+def update_state(maildir: Maildir) -> None:
     # TODO: cleanup state from non-existing maildir messages
-    # TODO: set flags for existing maildir messages
-    from .state import SqliteState
+    state = SqliteState(maildir.path)
+    infos = state.getall()
+    by_fname = {it.fname: it for it in infos}
 
+    toc = maildir.toc
+    for fname in toc:
+        if fname not in by_fname:
+            md_msg = maildir[fname]
+            msgid = message_id(md_msg)
+            state.put(fname, msgid)
+
+
+def reconcile_account(config: IniConfig, s: Sync) -> None:
+    print('Reconcile: ', s.account, s.folder, '->', s.maildir.name)
+    account = config.accounts[s.account]
+    maildir = get_maildir(s.maildir)
+    state = SqliteState(maildir.path)
+
+    infos = state.getall()
+    by_msgid = {it.msgid: it for it in infos}
+
+    to_fetch = []
+    folder = account.get_folder(s.folder)
+    found = 0
+    for uid, msgid, flags in folder.info():
+        if msgid not in by_msgid:
+            to_fetch.append(uid)
+        else:
+            found += 1
+
+    print('  Found messages:', found)
+    if to_fetch:
+        print('  Missing messages:', len(to_fetch))
+        folder.select()
+        for msg in folder.fetch_uids(to_fetch):
+            store_message2(maildir, state, msg['body'], msg['flags'])
+
+
+def sync_account_boxes(config: IniConfig, sync_list: list[Sync]) -> None:
     for s in sync_list:
-        print('Reconcile: ', s.account, s.folder, '->', s.maildir.name)
-        account = config.accounts[s.account]
-        maildir = get_maildir(s.maildir)
-        state = SqliteState(config.state_dir, s.account, s.folder)
+        try:
+            sync_account_box(config, s)
+        except Exception:
+            log.exception('Error during processing account %s %s', s.account, s.folder)
 
-        infos = state.getall()
-        by_fname = {it.fname: it for it in infos}
 
-        toc = maildir.toc
-        for k, v in toc.items():
-            if k not in by_fname:
-                md_msg = maildir[k]
-                msgid = message_id(md_msg)
-                state.put(k, msgid)
+def sync_account_box(config: IniConfig, s: Sync) -> None:
+    account = config.accounts[s.account]
+    maildir = get_maildir(s.maildir)
+    state = SqliteState(maildir.path)
 
-        infos = state.getall()
-        by_msgid = {it.msgid: it for it in infos}
+    toc = maildir.toc
+    folder = account.get_folder(s.folder)
+    unseen_uids = folder.unseen_uids()
 
+    if unseen_uids:
+        by_msgid = {it.msgid: it for it in state.getall()}
+        to_seen = []
         to_fetch = []
-        folder = account.get_folder(s.folder)
-        found = 0
-        for uid, msgid, flags in folder.allmeta():
+
+        for uid, msgid, _flags in folder.info(unseen_uids):
             if msgid not in by_msgid:
                 to_fetch.append(uid)
-            else:
-                found += 1
+            elif toc_entry := toc.get(by_msgid[msgid].fname):
+                if 'S' in toc_entry[1]:
+                    to_seen.append(uid)
 
-        print('  Found messages:', found)
         if to_fetch:
-            print('  Missing messages:', len(to_fetch))
-            folder.select()
             for msg in folder.fetch_uids(to_fetch):
                 store_message2(maildir, state, msg['body'], msg['flags'])
 
+        if to_seen:
+            folder.seen(to_seen)
 
-def sync_account(config: IniConfig, sync_list: list[Sync]) -> None:
-    try:
-        for s in sync_list:
-            account = config.accounts[s.account]
-            maildir = get_maildir(s.maildir)
-            state = config.get_state(s.account, s.folder)
+    deleted_msgid: dict[str, list[str]] = {}
+    tmaildir = get_maildir(MaildirConfig('trash', os.path.join(config.state_dir, 'trash')))
+    for fname in tmaildir.toc:
+        trash_msg = tmaildir[fname]
+        msgid = message_id(trash_msg)
+        deleted_msgid.setdefault(msgid, []).append(fname)
 
-            maxuid = state.get_maxuid()
-            folder = account.get_folder(s.folder)
-            messages = folder.fetch(config.fetch_last, maxuid)
+    to_delete = []
+    to_discard = []
+    if deleted_msgid:
+        for uid, msgid, _flags in folder.info(recent=500):
+            if msgid in deleted_msgid:
+                to_delete.append(uid)
+                to_discard.extend(deleted_msgid[msgid])
 
-            for m in messages:
-                store_message(maildir, state, m['uid'], m['body'], m['flags'])
+    if to_delete:
+        folder.delete(to_delete)
 
-            if not s.maildir.sync_new:
-                new_messages = [r for r in state.getall() if not r.flags]
-                messages_to_check = []
-
-                for nm in new_messages:
-                    if nm.msgkey in maildir:
-                        messages_to_check.append(nm)
-
-                if messages_to_check:
-                    flags = folder.get_flags([r.uid for r in messages_to_check])
-                    for mc in messages_to_check:
-                        if mc.uid not in flags:
-                            maildir.discard(mc.msgkey)
-                            state.remove([mc.uid])
-                        elif '\\Seen' in flags[mc.uid]:
-                            maildir.add_flags(mc.msgkey, 'S')
-                            state.put(mc.uid, mc.msgkey, maildir.get_flags(mc.msgkey))
-    except Exception:
-        log.exception('Error during processing account %s %s', s.account, s.folder)
+    for fname in to_discard:
+        tmaildir.discard(fname)
 
 
 def remote_sync_account(config: IniConfig, sync_list: list[Sync]) -> None:
@@ -203,11 +225,11 @@ def do_sync(config: IniConfig) -> None:
 
         if config.one_thread:
             for sync_list in accounts.values():
-                sync_account(config, sync_list)
+                sync_account_boxes(config, sync_list)
         else:
             threads = []
             for sync_list in accounts.values():
-                t = threading.Thread(target=sync_account, args=(config, sync_list))
+                t = threading.Thread(target=sync_account_boxes, args=(config, sync_list))
 
                 t.start()
                 threads.append(t)
@@ -218,12 +240,15 @@ def do_sync(config: IniConfig) -> None:
 
 def do_reconcile(config: IniConfig) -> None:
     with config.app_lock():
-        accounts: dict[str, list[Sync]] = {}
-        for s in config.sync_list:
-            accounts.setdefault(s.account, []).append(s)
+        for m in config.maildirs.values():
+            update_state(get_maildir(m))
 
-        for sync_list in accounts.values():
-            reconcile_account(config, sync_list)
+        for account, sync_list in config.sync_by_account().items():
+            for s in sync_list:
+                try:
+                    reconcile_account(config, s)
+                except Exception:
+                    log.exception('Error during processing account %s %s', s.account, s.folder)
 
 
 def do_new(config: IniConfig) -> None:

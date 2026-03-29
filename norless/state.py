@@ -40,16 +40,14 @@ def create_tables(conn: sqlite3.Connection) -> None:
     conn.execute("""CREATE TABLE IF NOT EXISTS state (
         fname text,
         msgid text,
-        flags text,
         PRIMARY KEY (fname, msgid)
     )""")
     conn.commit()
 
 
 class SqliteState:
-    def __init__(self, state_dir: str, account: str, folder: str):
-        folder = folder.replace('/', ':')
-        fname = os.path.join(state_dir, '{}-{}.sqlite'.format(account, folder))
+    def __init__(self, maildir_path: str):
+        fname = os.path.join(maildir_path, 'state.sqlite')
         self.conn = connect(fname)
         create_tables(self.conn)
 
