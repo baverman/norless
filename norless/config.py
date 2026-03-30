@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from typing import TypedDict, NotRequired
 
 from .imap import ImapBox
-from .state import State, DBMStateFactory
 from .utils import FileLockT
 
 SYNC_RE = re.compile('->')
@@ -142,8 +141,6 @@ class IniConfig:
         config.read(fname)
         self.parse(config)
 
-        self.state_factory = DBMStateFactory(self.state_dir)
-
     def parse(self, config: ConfigParser) -> None:
         self.state_dir = os.path.expanduser(config.get('norless', 'state_dir'))
         self.fetch_last = config.getint('norless', 'fetch_last')
@@ -209,9 +206,6 @@ class IniConfig:
             if (account is None or r.account == account)
             and (maildir is None or r.maildir.name == maildir)
         ]
-
-    def get_state(self, account: str, folder: str) -> State:
-        return self.state_factory.get(account, folder)
 
     def sync_by_account(self) -> dict[str, list[Sync]]:
         result: dict[str, list[Sync]] = {}

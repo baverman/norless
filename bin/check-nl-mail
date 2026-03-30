@@ -3,7 +3,7 @@ import re
 
 from subprocess import Popen, PIPE
 
-stdout, _ = Popen(['/usr/bin/env', 'norless', '-NSC'], stdout=PIPE).communicate()
+stdout, _ = Popen(['/usr/bin/env', 'norless', '-SC'], stdout=PIPE).communicate()
 for row in stdout.splitlines():
     box, count = row.decode('latin-1').rstrip().split('\t')
     Popen(['notify-send', '-t', '5000', 'New mail', '{} ({})'.format(box, count)]).wait()

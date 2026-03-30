@@ -7,12 +7,9 @@ import logging
 
 from collections import Counter
 
-from email.utils import parseaddr
-
 from .utils import FileLock
 from .maildir import Maildir, Message
 from .config import IniConfig, Maildir as MaildirConfig, Sync
-from .state import State, SqliteState
 from .imap import message_id
 
 get_maildir_lock = threading.Lock()
@@ -35,57 +32,19 @@ def get_maildir(maildir: MaildirConfig) -> Maildir:
         return result
 
 
-def store_message(
-    maildir: Maildir, state: State, uid: str, message: bytes, flags: tuple[str, ...]
-) -> None:
-    msg = Message(message)
-    mflags = ''
-    if '\\Seen' in flags:
-        mflags += 'S'
-
-    iuid = int(uid)
-    s = state.get(iuid)
-    if s:
-        if s.flags != mflags:
-            maildir.set_flags(s.msgkey, mflags)
-    else:
-        key = maildir.add(msg, mflags)
-        state.put(iuid, key, mflags)
-
-
-def store_message2(
-    maildir: Maildir, state: SqliteState, message: bytes, flags: tuple[str, ...]
-) -> None:
+def store_message(maildir: Maildir, message: bytes, flags: tuple[str, ...]) -> None:
     mflags = ''
     if '\\Seen' in flags:
         mflags += 'S'
 
     msg = Message(message)
     fname = maildir.add(msg, mflags)
-    state.put(fname, message_id(msg))
-
-
-def get_maildir_changes(maildir: Maildir, state: State) -> tuple[list[int], list[int]]:
-    seen = []
-    trash = []
-    for row in state.getall():
-        flags = set(row.flags)
-
-        try:
-            mflags = maildir.get_flags(row.msgkey)
-        except KeyError:
-            trash.append(row.uid)
-        else:
-            if 'S' in mflags and 'S' not in flags:
-                seen.append(row.uid)
-
-    return seen, trash
+    maildir.state.put(fname, message_id(msg))
 
 
 def update_state(maildir: Maildir) -> None:
     # TODO: cleanup state from non-existing maildir messages
-    state = SqliteState(maildir.path)
-    infos = state.getall()
+    infos = maildir.state.getall()
     by_fname = {it.fname: it for it in infos}
 
     toc = maildir.toc
@@ -93,14 +52,14 @@ def update_state(maildir: Maildir) -> None:
         if fname not in by_fname:
             md_msg = maildir[fname]
             msgid = message_id(md_msg)
-            state.put(fname, msgid)
+            maildir.state.put(fname, msgid)
 
 
 def reconcile_account(config: IniConfig, s: Sync) -> None:
     print('Reconcile: ', s.account, s.folder, '->', s.maildir.name)
     account = config.accounts[s.account]
     maildir = get_maildir(s.maildir)
-    state = SqliteState(maildir.path)
+    state = maildir.state
 
     infos = state.getall()
     by_msgid = {it.msgid: it for it in infos}
@@ -119,7 +78,7 @@ def reconcile_account(config: IniConfig, s: Sync) -> None:
         print('  Missing messages:', len(to_fetch))
         folder.select()
         for msg in folder.fetch_uids(to_fetch):
-            store_message2(maildir, state, msg['body'], msg['flags'])
+            store_message(maildir, msg['body'], msg['flags'])
 
 
 def sync_account_boxes(config: IniConfig, sync_list: list[Sync]) -> None:
@@ -133,14 +92,13 @@ def sync_account_boxes(config: IniConfig, sync_list: list[Sync]) -> None:
 def sync_account_box(config: IniConfig, s: Sync) -> None:
     account = config.accounts[s.account]
     maildir = get_maildir(s.maildir)
-    state = SqliteState(maildir.path)
 
     toc = maildir.toc
     folder = account.get_folder(s.folder)
     unseen_uids = folder.unseen_uids()
 
     if unseen_uids:
-        by_msgid = {it.msgid: it for it in state.getall()}
+        by_msgid = {it.msgid: it for it in maildir.state.getall()}
         to_seen = []
         to_fetch = []
 
@@ -153,7 +111,7 @@ def sync_account_box(config: IniConfig, s: Sync) -> None:
 
         if to_fetch:
             for msg in folder.fetch_uids(to_fetch):
-                store_message2(maildir, state, msg['body'], msg['flags'])
+                store_message(maildir, msg['body'], msg['flags'])
 
         if to_seen:
             folder.seen(to_seen)
@@ -173,49 +131,12 @@ def sync_account_box(config: IniConfig, s: Sync) -> None:
                 to_delete.append(uid)
                 to_discard.extend(deleted_msgid[msgid])
 
-    # print(s.account, s.folder, to_delete, to_discard)
+    # print(s.account, s.folder, to_delete, to_discard, deleted_msgid)
     if to_delete:
         folder.delete(to_delete)
 
     for fname in to_discard:
         tmaildir.discard(fname)
-
-
-def remote_sync_account(config: IniConfig, sync_list: list[Sync]) -> None:
-    for sr in sync_list:
-        account = config.accounts[sr.account]
-        maildir = get_maildir(sr.maildir)
-        state = config.get_state(sr.account, sr.folder)
-
-        seen, trash = get_maildir_changes(maildir, state)
-        if seen:
-            folder = account.get_folder(sr.folder)
-            folder.seen(seen)
-            for uid in seen:
-                s = state.get(uid)
-                if s:
-                    flags = set(s.flags)
-                    flags.add('S')
-                    sflags = ''.join(flags)
-                    state.put(s.uid, s.msgkey, sflags, s.is_check)
-
-        if trash:
-            folder = account.get_folder(sr.folder)
-            folder.trash(trash, sr.trash)
-            state.remove(trash)
-
-        if (seen or trash) and not config.quiet:
-            print('{}: seen {}, trash {}'.format(sr.account, len(seen), len(trash)))
-
-
-def do_remote_sync(config: IniConfig) -> None:
-    with config.app_lock(True):
-        accounts: dict[str, list[Sync]] = {}
-        for s in config.sync_list:
-            accounts.setdefault(s.account, []).append(s)
-
-        for sync_list in accounts.values():
-            remote_sync_account(config, sync_list)
 
 
 def do_sync(config: IniConfig) -> None:
@@ -252,52 +173,6 @@ def do_reconcile(config: IniConfig) -> None:
                     log.exception('Error during processing account %s %s', s.account, s.folder)
 
 
-def do_new(config: IniConfig) -> None:
-    with config.app_lock():
-        maildirs: dict[str, list[Sync]] = {}
-        for s in config.sync_list:
-            if s.maildir.sync_new:
-                maildirs.setdefault(s.maildir.name, []).append(s)
-
-        for sync_list in maildirs.values():
-            maildir = get_maildir(sync_list[0].maildir)
-            state_keys = set[str]()
-            for s in sync_list:
-                state = config.get_state(s.account, s.folder)
-                state_keys.update(r.msgkey for r in state.getall())
-
-            maildir_keys = set(maildir.toc)
-            new_messages = maildir_keys - state_keys
-
-            if new_messages:
-                addr_messages: dict[str, list[Message]] = {}
-                for msgkey in new_messages:
-                    msg = maildir[msgkey]
-                    addr = parseaddr(msg['From'])[1]
-                    addr_messages.setdefault(addr, []).append(msg)
-
-                for addr, messages in addr_messages.items():
-                    for s in sync_list:
-                        account = config.accounts[s.account]
-                        if account.from_addr == addr:
-                            break
-                    else:
-                        state = config.get_state(s.account, s.folder)
-                        minuid = state.get_minuid()
-                        for r in messages:
-                            minuid -= 1
-                            state.put(minuid, r.msgkey, 'S')
-
-                        print('Unknown addr', addr, file=sys.stderr)
-                        continue
-
-                    folder = account.get_folder(s.folder)
-                    state = config.get_state(s.account, s.folder)
-                    sm = folder.append_messages(messages, state.get_maxuid())
-                    for uid, msgkey in sm:
-                        state.put(uid, msgkey, 'S')
-
-
 def do_check(config: IniConfig) -> None:
     maildirs = set(s.maildir for s in config.sync_list)
 
@@ -332,9 +207,7 @@ ACTIONS = [
     do_show_folders,
     do_reconcile,
     do_sync,
-    do_remote_sync,
     do_check,
-    # do_new,
 ]
 
 
@@ -356,30 +229,12 @@ commands to get certificates:
     )
 
     parser.add_argument(
-        '-R',
-        '--remote-sync',
-        dest='actions',
-        action='append_const',
-        const=do_remote_sync,
-        help='command: sync local changes to remote maildirs',
-    )
-
-    parser.add_argument(
         '-C',
         '--check',
         dest='actions',
         action='append_const',
         const=do_check,
         help='command: check for new messages in local maildir(s)',
-    )
-
-    parser.add_argument(
-        '-N',
-        '--new',
-        dest='actions',
-        action='append_const',
-        const=do_new,
-        help='command: sync new messages in maildir(s)',
     )
 
     parser.add_argument(

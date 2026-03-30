@@ -11,6 +11,8 @@ from email.message import Message as EmailMessage
 from mailbox import Message as _Message
 from typing import Dict, Iterator, Tuple
 
+from .state import SqliteState
+
 
 class Message(_Message):
     msgkey: str
@@ -60,6 +62,8 @@ class Maildir(object):
                 for p in (self.path_new, self.path_cur, self.path_tmp):
                     if not exists(p):
                         os.mkdir(p, self.dir_mode)
+
+        self.state = SqliteState(self.path)
 
     @property
     def toc(self) -> Dict[str, Tuple[str, str]]:
