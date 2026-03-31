@@ -28,6 +28,12 @@ class Info(NamedTuple):
     msg: Message
 
 
+class Status(NamedTuple):
+    messages: int
+    unseen: int
+    uidvalidity: int
+
+
 class MsgDict(TypedDict):
     uid: str
     flags: tuple[str, ...]
@@ -126,11 +132,12 @@ class ImapBox:
     def get_folder(self, name: str) -> Folder:
         return Folder(self, name)
 
-    def get_status(self, folder: str) -> tuple[int, int]:
-        result = self.client.status(self.client._quote(folder), '(MESSAGES UNSEEN)')
+    def get_status(self, folder: str) -> Status:
+        result = self.client.status(self.client._quote(folder), '(MESSAGES UNSEEN UIDVALIDITY)')
         messages = int(get_field(result[1][0], 'MESSAGES'))
         unseen = int(get_field(result[1][0], 'UNSEEN'))
-        return messages, unseen
+        uidvalidity = int(get_field(result[1][0], 'UIDVALIDITY'))
+        return Status(messages, unseen, uidvalidity)
 
     def select(self, name: str) -> None:
         if name != self.selected_folder:
@@ -161,25 +168,21 @@ class Folder:
         self.box = box
         self.name = name
 
-        self._total: int | None = None
-        self._new: int | None = None
+    @cached_property
+    def status(self) -> Status:
+        return self.box.get_status(self.name)
 
     @property
     def total(self) -> int:
-        if self._total is None:
-            self.refresh()
-            assert self._total
-        return self._total
+        return self.status.messages
 
     @property
     def new(self) -> int:
-        if self._new is None:
-            self.refresh()
-            assert self._new
-        return self._new
+        return self.status.unseen
 
-    def refresh(self) -> None:
-        self._total, self._new = self.box.get_status(self.name)
+    @property
+    def uidvalidity(self) -> int:
+        return self.status.uidvalidity
 
     def select(self) -> None:
         self.box.select(self.name)
@@ -259,7 +262,7 @@ class Folder:
             r: MsgDict = {
                 'uid': get_field(info, 'UID'),
                 'flags': tuple(map(nstr, imaplib.ParseFlags(info))),
-                'body': msg.replace(b'\r\n', b'\n'),
+                'body': msg,
             }
             yield r
 

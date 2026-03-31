@@ -38,7 +38,7 @@ def store_message(maildir: Maildir, message: bytes, flags: tuple[str, ...]) -> N
         mflags += 'S'
 
     msg = Message(message)
-    fname = maildir.add(msg, mflags)
+    fname = maildir.add(message, mflags)
     maildir.state.put(fname, message_id(msg))
 
 

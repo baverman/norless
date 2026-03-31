@@ -57,6 +57,17 @@ def test_adding_message_object(tmpdir):
     assert 'boo' in msgpath.read()
 
 
+def test_adding_bytes_preserves_message_as_is(tmpdir):
+    path = tmpdir.join('inbox')
+    md = Maildir(path.strpath)
+
+    raw = b'Subject: test\r\n\r\nline1\r\nline2\r\n'
+    msgkey = md.add(raw)
+    msgpath = path.join('new').join(msgkey)
+
+    assert msgpath.read_binary() == raw
+
+
 def test_message_discard(tmpdir):
     path = tmpdir.join('inbox')
     md = Maildir(path.strpath)
