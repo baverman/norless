@@ -51,6 +51,17 @@ class SqliteState:
             return Info(*rows[0])
         return None
 
+    def by_msgid(self, msgid: str) -> Info | None:
+        params = (msgid,)
+        rows = self.conn.execute(
+            'SELECT fname, msgid FROM state WHERE msgid=? LIMIT 1',
+            params,
+        ).fetchall()
+
+        if rows:
+            return Info(*rows[0])
+        return None
+
     def getall(self) -> list[Info]:
         result = self.conn.execute('SELECT fname, msgid from state')
         return [Info(*r) for r in result]

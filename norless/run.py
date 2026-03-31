@@ -67,9 +67,9 @@ def reconcile_account(config: IniConfig, s: Sync) -> None:
     to_fetch = []
     folder = account.get_folder(s.folder)
     found = 0
-    for uid, msgid, flags, _ in folder.info():
-        if msgid not in by_msgid:
-            to_fetch.append(uid)
+    for rinfo in folder.info():
+        if rinfo.msgid not in by_msgid:
+            to_fetch.append(rinfo.uid)
         else:
             found += 1
 
@@ -98,16 +98,16 @@ def sync_account_box(config: IniConfig, s: Sync) -> None:
     unseen_uids = folder.unseen_uids()
 
     if unseen_uids:
-        by_msgid = {it.msgid: it for it in maildir.state.getall()}
         to_seen = []
         to_fetch = []
 
-        for uid, msgid, _flags, _msg in folder.info(unseen_uids):
-            if msgid not in by_msgid:
-                to_fetch.append(uid)
-            elif toc_entry := toc.get(by_msgid[msgid].fname):
+        for rinfo in folder.info(unseen_uids):
+            linfo = maildir.state.by_msgid(rinfo.msgid)
+            if linfo is None:
+                to_fetch.append(rinfo.uid)
+            elif toc_entry := toc.get(linfo.fname):
                 if 'S' in toc_entry[1]:
-                    to_seen.append(uid)
+                    to_seen.append(rinfo.uid)
 
         if to_fetch:
             for msg in folder.fetch_uids(to_fetch):
@@ -126,10 +126,10 @@ def sync_account_box(config: IniConfig, s: Sync) -> None:
     to_delete = []
     to_discard = []
     if deleted_msgid:
-        for uid, msgid, _flags, _msg in folder.info(recent=500):
-            if msgid in deleted_msgid:
-                to_delete.append(uid)
-                to_discard.extend(deleted_msgid[msgid])
+        for info in folder.info(recent=500):
+            if info.msgid in deleted_msgid:
+                to_delete.append(info.uid)
+                to_discard.extend(deleted_msgid[info.msgid])
 
     # print(s.account, s.folder, to_delete, to_discard, deleted_msgid)
     if to_delete:
@@ -141,9 +141,7 @@ def sync_account_box(config: IniConfig, s: Sync) -> None:
 
 def do_sync(config: IniConfig) -> None:
     with config.app_lock():
-        accounts: dict[str, list[Sync]] = {}
-        for s in config.sync_list:
-            accounts.setdefault(s.account, []).append(s)
+        accounts = config.sync_by_account()
 
         if config.one_thread:
             for sync_list in accounts.values():
