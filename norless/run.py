@@ -32,14 +32,16 @@ def get_maildir(maildir: MaildirConfig) -> Maildir:
         return result
 
 
-def store_message(maildir: Maildir, message: bytes, flags: tuple[str, ...]) -> None:
+def store_message(
+    maildir: Maildir, account: str, folder: str, uid: int, message: bytes, flags: tuple[str, ...]
+) -> None:
     mflags = ''
     if '\\Seen' in flags:
         mflags += 'S'
 
     msg = Message(message)
     fname = maildir.add(message, mflags)
-    maildir.state.put(fname, message_id(msg))
+    maildir.state.put_message(fname, account, folder, uid, message_id(msg), msg.hash())
 
 
 def update_state(maildir: Maildir) -> None:
@@ -52,33 +54,36 @@ def update_state(maildir: Maildir) -> None:
         if fname not in by_fname:
             md_msg = maildir[fname]
             msgid = message_id(md_msg)
-            maildir.state.put(fname, msgid)
+            maildir.state.put_message(fname, '', '', 0, msgid, md_msg.hash())
 
 
 def reconcile_account(config: IniConfig, s: Sync) -> None:
     print('Reconcile: ', s.account, s.folder, '->', s.maildir.name)
     account = config.accounts[s.account]
     maildir = get_maildir(s.maildir)
-    state = maildir.state
-
-    infos = state.getall()
-    by_msgid = {it.msgid: it for it in infos}
+    by_msgid = {it.msgid: it for it in maildir.state.getall()}
+    maildir.state.reset_folder_messages(s.account, s.folder)
 
     to_fetch = []
     folder = account.get_folder(s.folder)
     found = 0
     for rinfo in folder.info():
-        if rinfo.msgid not in by_msgid:
-            to_fetch.append(rinfo.uid)
-        else:
+        linfo = by_msgid.get(rinfo.msgid)
+        if linfo:
             found += 1
+            maildir.state.put_message(
+                linfo.fname, s.account, s.folder, rinfo.uid, rinfo.msgid, linfo.hash
+            )
+        else:
+            to_fetch.append(rinfo.uid)
 
     print('  Found messages:', found)
     if to_fetch:
         print('  Missing messages:', len(to_fetch))
-        folder.select()
         for msg in folder.fetch_uids(to_fetch):
-            store_message(maildir, msg['body'], msg['flags'])
+            store_message(maildir, s.account, s.folder, int(msg['uid']), msg['body'], msg['flags'])
+
+    maildir.state.set_folder(s.account, s.folder, folder.uidvalidity)
 
 
 def sync_account_boxes(config: IniConfig, sync_list: list[Sync]) -> None:
@@ -95,6 +100,7 @@ def sync_account_box(config: IniConfig, s: Sync) -> None:
 
     toc = maildir.toc
     folder = account.get_folder(s.folder)
+    assert folder.uidvalidity == maildir.state.uidvalidity(s.account, s.folder)
     unseen_uids = folder.unseen_uids()
 
     if unseen_uids:
@@ -102,7 +108,7 @@ def sync_account_box(config: IniConfig, s: Sync) -> None:
         to_fetch = []
 
         for rinfo in folder.info(unseen_uids):
-            linfo = maildir.state.by_msgid(rinfo.msgid)
+            linfo = maildir.state.by_uid(s.account, s.folder, rinfo.uid)
             if linfo is None:
                 to_fetch.append(rinfo.uid)
             elif toc_entry := toc.get(linfo.fname):
@@ -111,27 +117,24 @@ def sync_account_box(config: IniConfig, s: Sync) -> None:
 
         if to_fetch:
             for msg in folder.fetch_uids(to_fetch):
-                store_message(maildir, msg['body'], msg['flags'])
+                store_message(
+                    maildir, s.account, s.folder, int(msg['uid']), msg['body'], msg['flags']
+                )
 
         if to_seen:
             folder.seen(to_seen)
 
-    deleted_msgid: dict[str, list[str]] = {}
+    to_delete = []
+    to_discard = set()
     tmaildir = get_maildir(MaildirConfig('trash', os.path.join(config.state_dir, 'trash')))
     for fname in tmaildir.toc:
         trash_msg = tmaildir[fname]
-        msgid = message_id(trash_msg)
-        deleted_msgid.setdefault(msgid, []).append(fname)
+        for linfo in maildir.state.by_msgid(s.account, s.folder, message_id(trash_msg)):
+            if linfo.fname not in toc:
+                to_delete.append(linfo.uid)
+                to_discard.add(fname)
 
-    to_delete = []
-    to_discard = []
-    if deleted_msgid:
-        for info in folder.info(recent=500):
-            if info.msgid in deleted_msgid:
-                to_delete.append(info.uid)
-                to_discard.extend(deleted_msgid[info.msgid])
-
-    # print(s.account, s.folder, to_delete, to_discard, deleted_msgid)
+    # print(s.account, s.folder, to_delete, to_discard)
     if to_delete:
         folder.delete(to_delete)
 

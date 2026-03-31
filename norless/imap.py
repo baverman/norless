@@ -251,6 +251,8 @@ class Folder:
         if not uids:
             return
 
+        self.select()
+
         for batch in batched(uids, 100):
             result = self.box.client.uid(
                 'fetch', ','.join(map(str, batch)), '(UID FLAGS BODY.PEEK[])'

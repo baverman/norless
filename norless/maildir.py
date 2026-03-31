@@ -6,8 +6,8 @@ from time import time
 from threading import RLock
 from tempfile import mkstemp
 from os.path import join, exists, isfile, basename
+from hashlib import sha256
 
-from email.message import Message as EmailMessage
 from mailbox import Message as _Message
 from typing import Dict, Iterator, Tuple
 
@@ -17,13 +17,18 @@ from .state import SqliteState
 class Message(_Message):
     msgkey: str
     size: int
+    original_body: bytes
 
     def __init__(self, data: bytes, size: int | None = None) -> None:
         super().__init__(data)
+        self.original_body = data
         if size is not None:
             self.size = size
         else:
             self.size = len(data)
+
+    def hash(self) -> str:
+        return sha256(self.original_body).hexdigest()
 
 
 def parse_info(info: str) -> str:
@@ -91,13 +96,10 @@ class Maildir(object):
         suffix = '.{}'.format(self._host)
         return mkstemp(suffix, prefix, self.path_tmp)
 
-    def add(self, message: bytes | EmailMessage, flags: str = '') -> str:
+    def add(self, message: bytes, flags: str = '') -> str:
         with self.lock:
             fd, fpath = self._make_tmp_file()
             msgkey = basename(fpath)
-
-            if isinstance(message, EmailMessage):
-                message = message.as_bytes()
 
             os.write(fd, message)
             os.close(fd)
