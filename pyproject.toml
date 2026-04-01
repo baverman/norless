@@ -1,7 +1,7 @@
 [tool.mypy]
 python_version = "3.14"
 strict = true
-packages = ["norless"]
+packages = ["norless", "tests.test_schema"]
 
 [tool.ruff]
 line-length = 100

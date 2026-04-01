@@ -1,43 +1,35 @@
 from __future__ import annotations
 
-import time
-import re
-from configparser import ConfigParser
 import os.path
-
+import re
+import time
+import tomllib
 from dataclasses import dataclass
-from typing import TypedDict, NotRequired
 
+from .config2 import AccountConfig, Config, MaildirConfig
 from .imap import ImapBox
-from .utils import FileLockT
+from .schema import parse
+from .utils import FileLock, FileLockT
 
 SYNC_RE = re.compile('->')
 
 
-class AccountDict(TypedDict):
-    host: str
-    port: int
-    user: str
-    password: str
-    debug: int
-    from_addr: str
-    cafile: NotRequired[str]
-    xoauth2: NotRequired[XOauth2Holder]
-
-
 @dataclass(frozen=True)
-class Maildir(object):
-    name: str
-    path: str
-    sync_new: bool = False
-
-
-@dataclass
 class Sync:
     account: str
     folder: str
-    maildir: Maildir
+    maildir: MaildirConfig
     trash: str = 'Trash'
+
+
+@dataclass(frozen=True)
+class SmtpAccount:
+    from_addr: str
+    host: str
+    port: int
+    user: str
+    password: str | None
+    xoauth2: XOauth2Holder | None
 
 
 class XOauth2Holder:
@@ -69,143 +61,102 @@ class XOauth2Holder:
         return token
 
 
-class IniSmtpConfig:
-    def __init__(self, fname: str) -> None:
-        self.accounts: dict[str, AccountDict] = {}
-        self.maildirs: dict[str, Maildir] = {}
-        self.sync_list: list[Sync] = []
-
-        config = ConfigParser(
-            {'smtp_port': '587', 'debug': '0', 'password': '', 'timeout': '5', 'xoauth2': 'no'}
-        )
-
-        config.read(fname)
-        self.parse(config)
-
-    def parse(self, config: ConfigParser) -> None:
-        self.state_dir = os.path.expanduser(config.get('norless', 'state_dir'))
-        self.timeout = config.getint('norless', 'timeout')
-        self.parse_accounts(config)
-
-    def parse_accounts(self, config: ConfigParser) -> None:
-        for s in config.sections():
-            if s.startswith('account'):
-                _, account = s.split()[:2]
-                acc: AccountDict = {
-                    'host': config.get(s, 'smtp_host'),
-                    'port': config.getint(s, 'smtp_port'),
-                    'user': config.get(s, 'user'),
-                    'password': config.get(s, 'password'),
-                    'debug': config.getint(s, 'debug'),
-                    'from_addr': config.get(s, 'from'),
-                }
-                cafile = config.get(s, 'smtp_cafile', fallback=None)
-                if cafile:
-                    acc['cafile'] = os.path.expanduser(cafile)
-
-                if config.getboolean(s, 'xoauth2'):
-                    acc['xoauth2'] = XOauth2Holder(
-                        self.state_dir,
-                        account,
-                        config.get(s, 'xoauth2_client_id'),
-                        config.get(s, 'xoauth2_secret'),
-                        config.get(s, 'xoauth2_refresh'),
-                    )
-
-                self.accounts[account] = acc
+def load_toml(fname: str) -> Config:
+    with open(fname, 'rb') as f:
+        return parse(Config, tomllib.load(f))
 
 
-class IniConfig:
+class NorlessConfig:
+    raw: Config
     quiet: bool
     app_lock: FileLockT
     one_thread: bool
 
-    def __init__(self, fname: str) -> None:
+    def __init__(
+        self,
+        fname: str,
+        *,
+        account: str | None = None,
+        maildir: str | None = None,
+        one_thread: bool = False,
+        quiet: bool = False,
+    ) -> None:
+        self.raw = load_toml(fname)
+        self.state_dir = os.path.expanduser(self.raw.state_dir)
+        self.timeout = self.raw.timeout
+        self.debug = self.raw.debug
+        self.one_thread = one_thread
+        self.quiet = quiet
+        self.app_lock = FileLock(os.path.join(self.state_dir, '.norless-lock'))
+
+        all_maildirs = {m.name: m for m in self.raw.maildirs}
+        self.maildirs = {
+            name: cfg for name, cfg in all_maildirs.items() if maildir is None or name == maildir
+        }
+        if self.raw.trash_maildir is None:
+            self.trash_maildir_config = None
+        else:
+            self.trash_maildir_config = MaildirConfig(
+                self.raw.trash_maildir,
+                None,
+                False,
+            )
+
         self.accounts: dict[str, ImapBox] = {}
-        self.maildirs: dict[str, Maildir] = {}
+        self.smtp_accounts: dict[str, SmtpAccount] = {}
         self.sync_list: list[Sync] = []
 
-        config = ConfigParser(
-            {
-                'port': '0',
-                'fetch_last': '500',
-                'ssl': 'yes',
-                'timeout': '5',
-                'debug': '0',
-                'sync_new': 'no',
-                'xoauth2': 'no',
-                'password': '',
-            }
+        for cfg in self.raw.accounts:
+            if account is not None and cfg.name != account:
+                continue
+
+            xoauth2 = self._build_xoauth2(cfg)
+
+            box = ImapBox(
+                cfg.host,
+                cfg.user,
+                cfg.password or '',
+                cfg.port,
+                True,
+                None,
+                os.path.expanduser(cfg.cafile) if cfg.cafile else None,
+                int(self.debug),
+                xoauth2,
+            )
+            box.name = cfg.name
+            box.from_addr = cfg.from_addr
+            self.accounts[cfg.name] = box
+
+            self.smtp_accounts[cfg.from_addr] = SmtpAccount(
+                cfg.from_addr,
+                cfg.smtp_host,
+                cfg.smtp_port or 587,
+                cfg.user,
+                cfg.password,
+                xoauth2,
+            )
+
+            for folder, maildir_name in cfg.folders.items():
+                if maildir is not None and maildir_name != maildir:
+                    continue
+                try:
+                    sync_maildir = self.maildirs[maildir_name]
+                except KeyError as e:
+                    raise ValueError(
+                        f'Unknown maildir {maildir_name!r} for account {cfg.name!r}'
+                    ) from e
+                self.sync_list.append(Sync(cfg.name, folder, sync_maildir, cfg.trash or 'Trash'))
+
+    def _build_xoauth2(self, cfg: AccountConfig) -> XOauth2Holder | None:
+        if cfg.xoauth2 is None:
+            return None
+        return XOauth2Holder(
+            self.state_dir,
+            cfg.name,
+            cfg.xoauth2.client_id,
+            cfg.xoauth2.secret,
+            cfg.xoauth2.refresh,
         )
-
-        config.read(fname)
-        self.parse(config)
-
-    def parse(self, config: ConfigParser) -> None:
-        self.state_dir = os.path.expanduser(config.get('norless', 'state_dir'))
-        self.fetch_last = config.getint('norless', 'fetch_last')
-        self.timeout = config.getint('norless', 'timeout')
-
-        self.parse_maildirs(config)
-        self.parse_accounts(config)
-
-    def parse_accounts(self, config: ConfigParser) -> None:
-        for s in config.sections():
-            if s.startswith('account'):
-                _, account = s.split()[:2]
-
-                host = config.get(s, 'host')
-                port = config.getint(s, 'port')
-                user = config.get(s, 'user')
-                password = config.get(s, 'password')
-                ssl = config.getboolean(s, 'ssl')
-                fingerprint = config.get(s, 'fingerprint', fallback=None)
-                cafile = config.get(s, 'cafile', fallback=None)
-                if cafile:
-                    cafile = os.path.expanduser(cafile)
-                debug = config.getint(s, 'debug')
-
-                xoauth2: XOauth2Holder | None = None
-                if config.getboolean(s, 'xoauth2'):
-                    xoauth2 = XOauth2Holder(
-                        self.state_dir,
-                        account,
-                        config.get(s, 'xoauth2_client_id'),
-                        config.get(s, 'xoauth2_secret'),
-                        config.get(s, 'xoauth2_refresh'),
-                    )
-
-                acc = ImapBox(host, user, password, port, ssl, fingerprint, cafile, debug, xoauth2)
-                acc.name = account
-                acc.from_addr = config.get(s, 'from', fallback=None)
-                self.accounts[account] = acc
-
-                trash = config.get(s, 'trash')
-                sync = config.get(s, 'sync')
-                if sync:
-                    for sp in sync.split('|'):
-                        folder, maildir = SYNC_RE.split(sp)
-                        self.sync_list.append(
-                            Sync(account, folder.strip(), self.maildirs[maildir.strip()], trash)
-                        )
-
-    def parse_maildirs(self, config: ConfigParser) -> None:
-        for s in config.sections():
-            if s.startswith('maildir'):
-                _, maildir = s.split()[:2]
-                path = config.get(s, 'path')
-                sync_new = config.getboolean(s, 'sync_new')
-                self.maildirs[maildir] = Maildir(maildir, path, sync_new)
-
-    def restrict_to(self, *, account: str | None, maildir: str | None) -> None:
-        self.accounts = {k: v for k, v in self.accounts.items() if account is None or k == account}
-        self.maildirs = {k: v for k, v in self.maildirs.items() if maildir is None or k == maildir}
-        self.sync_list = [
-            r
-            for r in self.sync_list
-            if (account is None or r.account == account)
-            and (maildir is None or r.maildir.name == maildir)
-        ]
 
     def sync_by_account(self) -> dict[str, list[Sync]]:
         result: dict[str, list[Sync]] = {}

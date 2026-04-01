@@ -1,0 +1,43 @@
+state_dir = "~/mail/state"
+timeout = 5
+debug = false
+trash_maildir = "trash"
+
+[[maildir]]
+name = "inbox"
+path = "~/mail/inbox"
+
+[[maildir]]
+name = "trash"
+path = "~/mail/trash"
+
+[[account]]
+name = "home"
+host = "imap.somehost1.com"
+user = "user"
+password = "password"
+from = "user@example.com"
+trash = "Trash"
+
+smtp_host = "smtp.somehost1.com"
+smtp_port = 587
+
+[account.folders]
+INBOX = "inbox"
+
+[[account]]
+name = "work"
+host = "imap.gmail.com"
+user = "user@gmail.com"
+from = "user@gmail.com"
+trash = "[Gmail]/Trash"
+smtp_host = "smtp.gmail.com"
+smtp_port = 587
+
+[account.xoauth2]
+client_id = "client-id"
+secret = "client-secret"
+refresh = "refresh-token"
+
+[account.folders]
+INBOX = "inbox"

@@ -7,9 +7,9 @@ import logging
 
 from collections import Counter
 
-from .utils import FileLock
 from .maildir import Maildir, Message
-from .config import IniConfig, Maildir as MaildirConfig, Sync
+from .config import NorlessConfig, Sync
+from .config2 import MaildirConfig
 from .imap import message_id
 
 get_maildir_lock = threading.Lock()
@@ -20,9 +20,9 @@ Flags = tuple[str, ...]
 maildir_cache: dict[str, Maildir] = {}
 
 
-def get_maildir(maildir: MaildirConfig) -> Maildir:
+def get_maildir(config: NorlessConfig, maildir: MaildirConfig) -> Maildir:
     with get_maildir_lock:
-        key = os.path.expanduser(maildir.path)
+        key = os.path.join(config.state_dir, os.path.expanduser(maildir.path))
         try:
             return maildir_cache[key]
         except KeyError:
@@ -57,10 +57,10 @@ def update_state(maildir: Maildir) -> None:
             maildir.state.put_message(fname, '', '', 0, msgid, md_msg.hash())
 
 
-def reconcile_account(config: IniConfig, s: Sync) -> None:
+def reconcile_account(config: NorlessConfig, s: Sync) -> None:
     print('Reconcile: ', s.account, s.folder, '->', s.maildir.name)
     account = config.accounts[s.account]
-    maildir = get_maildir(s.maildir)
+    maildir = get_maildir(config, s.maildir)
     by_msgid = {it.msgid: it for it in maildir.state.getall()}
     maildir.state.reset_folder_messages(s.account, s.folder)
 
@@ -86,7 +86,7 @@ def reconcile_account(config: IniConfig, s: Sync) -> None:
     maildir.state.set_folder(s.account, s.folder, folder.uidvalidity)
 
 
-def sync_account_boxes(config: IniConfig, sync_list: list[Sync]) -> None:
+def sync_account_boxes(config: NorlessConfig, sync_list: list[Sync]) -> None:
     for s in sync_list:
         try:
             sync_account_box(config, s)
@@ -94,9 +94,9 @@ def sync_account_boxes(config: IniConfig, sync_list: list[Sync]) -> None:
             log.exception('Error during processing account %s %s', s.account, s.folder)
 
 
-def sync_account_box(config: IniConfig, s: Sync) -> None:
+def sync_account_box(config: NorlessConfig, s: Sync) -> None:
     account = config.accounts[s.account]
-    maildir = get_maildir(s.maildir)
+    maildir = get_maildir(config, s.maildir)
 
     toc = maildir.toc
     folder = account.get_folder(s.folder)
@@ -124,25 +124,27 @@ def sync_account_box(config: IniConfig, s: Sync) -> None:
         if to_seen:
             folder.seen(to_seen)
 
-    to_delete = []
-    to_discard = set()
-    tmaildir = get_maildir(MaildirConfig('trash', os.path.join(config.state_dir, 'trash')))
-    for fname in tmaildir.toc:
-        trash_msg = tmaildir[fname]
-        for linfo in maildir.state.by_msgid(s.account, s.folder, message_id(trash_msg)):
-            if linfo.fname not in toc:
-                to_delete.append(linfo.uid)
-                to_discard.add(fname)
+    if config.trash_maildir_config is not None:
+        to_delete = []
+        to_discard = set()
 
-    # print(s.account, s.folder, to_delete, to_discard)
-    if to_delete:
-        folder.delete(to_delete)
+        tmaildir = get_maildir(config, config.trash_maildir_config)
+        for fname in tmaildir.toc:
+            trash_msg = tmaildir[fname]
+            for linfo in maildir.state.by_msgid(s.account, s.folder, message_id(trash_msg)):
+                if linfo.fname not in toc:
+                    to_delete.append(linfo.uid)
+                    to_discard.add(fname)
 
-    for fname in to_discard:
-        tmaildir.discard(fname)
+        # print(s.account, s.folder, to_delete, to_discard)
+        if to_delete:
+            folder.delete(to_delete)
+
+        for fname in to_discard:
+            tmaildir.discard(fname)
 
 
-def do_sync(config: IniConfig) -> None:
+def do_sync(config: NorlessConfig) -> None:
     with config.app_lock():
         accounts = config.sync_by_account()
 
@@ -161,10 +163,10 @@ def do_sync(config: IniConfig) -> None:
                 t.join()
 
 
-def do_reconcile(config: IniConfig) -> None:
+def do_reconcile(config: NorlessConfig) -> None:
     with config.app_lock():
         for m in config.maildirs.values():
-            update_state(get_maildir(m))
+            update_state(get_maildir(config, m))
 
         for account, sync_list in config.sync_by_account().items():
             for s in sync_list:
@@ -174,12 +176,10 @@ def do_reconcile(config: IniConfig) -> None:
                     log.exception('Error during processing account %s %s', s.account, s.folder)
 
 
-def do_check(config: IniConfig) -> None:
-    maildirs = set(s.maildir for s in config.sync_list)
-
+def do_check(config: NorlessConfig) -> None:
     result = Counter[str]()
-    for cmaildir in maildirs:
-        maildir = get_maildir(cmaildir)
+    for cmaildir in {s.maildir.name: s.maildir for s in config.sync_list}.values():
+        maildir = get_maildir(config, cmaildir)
         for _, flags in maildir.iterflags():
             if 'S' not in flags:
                 result[cmaildir.name] += 1
@@ -191,7 +191,7 @@ def do_check(config: IniConfig) -> None:
         sys.exit(1)
 
 
-def do_show_folders(config: IniConfig) -> None:
+def do_show_folders(config: NorlessConfig) -> None:
     for account, box in config.accounts.items():
         print(account)
         for f, s, name in box.list_folders():
@@ -258,7 +258,7 @@ commands to get certificates:
         '-f',
         '--config',
         dest='config',
-        default=os.path.expanduser('~/.config/norlessrc'),
+        default=os.path.expanduser('~/.config/norless.toml'),
         help='path to config file (%(default)s)',
     )
 
@@ -277,16 +277,16 @@ commands to get certificates:
 
     args = parser.parse_args()
 
-    config = IniConfig(args.config)
-    config.restrict_to(account=args.account, maildir=args.maildir)
-
-    config.one_thread = args.one_thread
-    config.quiet = args.quiet
+    config = NorlessConfig(
+        args.config,
+        account=args.account,
+        maildir=args.maildir,
+        one_thread=args.one_thread,
+        quiet=args.quiet,
+    )
 
     if config.timeout:
         socket.setdefaulttimeout(config.timeout)
-
-    config.app_lock = FileLock(os.path.join(config.state_dir, '.norless-lock'))
 
     logging.basicConfig(level='ERROR')
 
