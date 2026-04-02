@@ -33,10 +33,17 @@ def get_maildir(config: NorlessConfig, maildir: MaildirConfig) -> Maildir:
 
 
 def store_message(
-    maildir: Maildir, account: str, folder: str, uid: int, message: bytes, flags: tuple[str, ...]
+    maildir: Maildir,
+    account: str,
+    folder: str,
+    uid: int,
+    message: bytes,
+    flags: tuple[str, ...],
+    *,
+    seen: bool = False,
 ) -> None:
     mflags = ''
-    if '\\Seen' in flags:
+    if seen or '\\Seen' in flags:
         mflags += 'S'
 
     msg = Message(message)
@@ -106,11 +113,14 @@ def sync_account_box(config: NorlessConfig, s: Sync) -> None:
     if unseen_uids:
         to_seen = []
         to_fetch = []
+        mark_as_seen = s.maildir.mark_as_seen
 
         for rinfo in folder.info(unseen_uids):
             linfo = maildir.state.by_uid(s.account, s.folder, rinfo.uid)
             if linfo is None:
                 to_fetch.append(rinfo.uid)
+                if mark_as_seen:
+                    to_seen.append(rinfo.uid)
             elif toc_entry := toc.get(linfo.fname):
                 if 'S' in toc_entry[1]:
                     to_seen.append(rinfo.uid)
@@ -118,7 +128,13 @@ def sync_account_box(config: NorlessConfig, s: Sync) -> None:
         if to_fetch:
             for msg in folder.fetch_uids(to_fetch):
                 store_message(
-                    maildir, s.account, s.folder, int(msg['uid']), msg['body'], msg['flags']
+                    maildir,
+                    s.account,
+                    s.folder,
+                    int(msg['uid']),
+                    msg['body'],
+                    msg['flags'],
+                    seen=mark_as_seen,
                 )
 
         if to_seen:
