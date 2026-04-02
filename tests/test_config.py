@@ -47,7 +47,7 @@ INBOX = "inbox"
     assert account.host == 'imap.example.com'
     assert account.port == 993
     assert account.from_addr == 'alice@example.com'
-    smtp_account = config.smtp_account_for('alice@example.com')
+    smtp_account = config.smtp_accounts['alice@example.com']
     assert smtp_account.port == 2525
     assert smtp_account.host == 'smtp.example.com'
     assert smtp_account.xoauth2 is None
@@ -128,7 +128,7 @@ INBOX = "inbox"
 
     config = NorlessConfig(str(config_path))
 
-    smtp_account = config.smtp_account_for('alice@example.com')
+    smtp_account = config.smtp_accounts['alice@example.com']
     assert smtp_account.xoauth2 is not None
     assert smtp_account.xoauth2.client_id == 'cid'
     assert smtp_account.xoauth2.secret == 'sec'
