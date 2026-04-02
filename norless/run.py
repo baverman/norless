@@ -9,7 +9,7 @@ from collections import Counter
 
 from .maildir import Maildir, Message
 from .config import NorlessConfig, Sync
-from .config2 import MaildirConfig
+from .config_model import MaildirConfig
 from .imap import message_id
 
 get_maildir_lock = threading.Lock()

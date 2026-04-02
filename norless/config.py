@@ -6,7 +6,7 @@ import time
 import tomllib
 from dataclasses import dataclass
 
-from .config2 import AccountConfig, Config, MaildirConfig
+from .config_model import AccountConfig, Config, MaildirConfig
 from .imap import ImapBox
 from .schema import parse
 from .utils import FileLock, FileLockT

@@ -1,4 +1,4 @@
-from norless.config2 import Config, XOAuth2Config
+from norless.config_model import Config, XOAuth2Config
 from norless.schema import parse, ValidationError
 
 
