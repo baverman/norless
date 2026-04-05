@@ -3,7 +3,7 @@ import errno
 import socket
 
 from time import time
-from threading import RLock
+from threading import RLock, local
 from tempfile import mkstemp
 from os.path import join, exists, isfile, basename
 from hashlib import sha256
@@ -58,6 +58,7 @@ class Maildir(object):
         self._counter = 0
         self._host = socket.gethostname().replace('.', '-').replace(':', '-')
         self._pid = os.getpid()
+        self._state_local = local()
 
         if create:
             with self.lock:
@@ -68,7 +69,14 @@ class Maildir(object):
                     if not exists(p):
                         os.mkdir(p, self.dir_mode)
 
-        self.state = SqliteState(self.path)
+    @property
+    def state(self) -> SqliteState:
+        try:
+            return self._state_local.state  # type: ignore[no-any-return]
+        except AttributeError:
+            state = SqliteState(self.path)
+            self._state_local.state = state
+            return state
 
     @property
     def toc(self) -> Dict[str, Tuple[str, str]]:

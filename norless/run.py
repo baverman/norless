@@ -48,12 +48,14 @@ def store_message(
 
     msg = Message(message)
     fname = maildir.add(message, mflags)
-    maildir.state.put_message(fname, account, folder, uid, message_id(msg), msg.hash())
+    state = maildir.state
+    state.put_message(fname, account, folder, uid, message_id(msg), msg.hash())
 
 
 def update_state(maildir: Maildir) -> None:
     # TODO: cleanup state from non-existing maildir messages
-    infos = maildir.state.getall()
+    state = maildir.state
+    infos = state.getall()
     by_fname = {it.fname: it for it in infos}
 
     toc = maildir.toc
@@ -61,15 +63,16 @@ def update_state(maildir: Maildir) -> None:
         if fname not in by_fname:
             md_msg = maildir[fname]
             msgid = message_id(md_msg)
-            maildir.state.put_message(fname, '', '', 0, msgid, md_msg.hash())
+            state.put_message(fname, '', '', 0, msgid, md_msg.hash())
 
 
 def reconcile_account(config: NorlessConfig, s: Sync) -> None:
     print('Reconcile: ', s.account, s.folder, '->', s.maildir.name)
     account = config.accounts[s.account]
     maildir = get_maildir(config, s.maildir)
-    by_msgid = {it.msgid: it for it in maildir.state.getall()}
-    maildir.state.reset_folder_messages(s.account, s.folder)
+    state = maildir.state
+    by_msgid = {it.msgid: it for it in state.getall()}
+    state.reset_folder_messages(s.account, s.folder)
 
     to_fetch = []
     folder = account.get_folder(s.folder)
@@ -78,9 +81,7 @@ def reconcile_account(config: NorlessConfig, s: Sync) -> None:
         linfo = by_msgid.get(rinfo.msgid)
         if linfo:
             found += 1
-            maildir.state.put_message(
-                linfo.fname, s.account, s.folder, rinfo.uid, rinfo.msgid, linfo.hash
-            )
+            state.put_message(linfo.fname, s.account, s.folder, rinfo.uid, rinfo.msgid, linfo.hash)
         else:
             to_fetch.append(rinfo.uid)
 
@@ -90,7 +91,7 @@ def reconcile_account(config: NorlessConfig, s: Sync) -> None:
         for msg in folder.fetch_uids(to_fetch):
             store_message(maildir, s.account, s.folder, int(msg['uid']), msg['body'], msg['flags'])
 
-    maildir.state.set_folder(s.account, s.folder, folder.uidvalidity)
+    state.set_folder(s.account, s.folder, folder.uidvalidity)
 
 
 def sync_account_boxes(config: NorlessConfig, sync_list: list[Sync]) -> None:
@@ -104,10 +105,11 @@ def sync_account_boxes(config: NorlessConfig, sync_list: list[Sync]) -> None:
 def sync_account_box(config: NorlessConfig, s: Sync) -> None:
     account = config.accounts[s.account]
     maildir = get_maildir(config, s.maildir)
+    state = maildir.state
 
     toc = maildir.toc
     folder = account.get_folder(s.folder)
-    assert folder.uidvalidity == maildir.state.uidvalidity(s.account, s.folder)
+    assert folder.uidvalidity == state.uidvalidity(s.account, s.folder)
     unseen_uids = folder.unseen_uids()
 
     if unseen_uids:
@@ -116,7 +118,7 @@ def sync_account_box(config: NorlessConfig, s: Sync) -> None:
         mark_as_seen = s.maildir.mark_as_seen
 
         for rinfo in folder.info(unseen_uids):
-            linfo = maildir.state.by_uid(s.account, s.folder, rinfo.uid)
+            linfo = state.by_uid(s.account, s.folder, rinfo.uid)
             if linfo is None:
                 to_fetch.append(rinfo.uid)
                 if mark_as_seen:
@@ -147,7 +149,7 @@ def sync_account_box(config: NorlessConfig, s: Sync) -> None:
         tmaildir = get_maildir(config, config.trash_maildir_config)
         for fname in tmaildir.toc:
             trash_msg = tmaildir[fname]
-            for linfo in maildir.state.by_msgid(s.account, s.folder, message_id(trash_msg)):
+            for linfo in state.by_msgid(s.account, s.folder, message_id(trash_msg)):
                 if linfo.fname not in toc:
                     to_delete.append(linfo.uid)
                     to_discard.add(fname)
