@@ -109,7 +109,14 @@ def sync_account_box(config: NorlessConfig, s: Sync) -> None:
 
     toc = maildir.toc
     folder = account.get_folder(s.folder)
-    assert folder.uidvalidity == state.uidvalidity(s.account, s.folder)
+
+    local_uidvalidity = state.uidvalidity(s.account, s.folder)
+    if folder.uidvalidity != local_uidvalidity:
+        raise RuntimeError(
+            f'UIDVALIDITY mismatch for {s.account}/{s.folder}: '
+            f'remote={folder.uidvalidity}, local={local_uidvalidity}'
+        )
+
     unseen_uids = folder.unseen_uids()
 
     if unseen_uids:
