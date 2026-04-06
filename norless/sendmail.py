@@ -8,11 +8,12 @@ import smtplib
 from base64 import b64encode
 
 from .config import NorlessConfig
-from .utils import nstr
 
 
 def encode_token(user: str, token: str) -> str:
-    return nstr(b64encode('user={}\x01auth=Bearer {}\x01\x01'.format(user, token).encode()))
+    return b64encode('user={}\x01auth=Bearer {}\x01\x01'.format(user, token).encode()).decode(
+        'ascii'
+    )
 
 
 def send(config: NorlessConfig, from_addr: str, recipients: list[str], msg: bytes) -> None:

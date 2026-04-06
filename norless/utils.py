@@ -7,21 +7,6 @@ from email.header import decode_header
 from subprocess import PIPE, Popen
 from typing import Iterator, Protocol
 
-btype = type(b'')
-ntype = type('')
-utype = type('')
-
-
-def nstr(s: bytes, encoding: str = 'latin-1') -> str:
-    t = type(s)
-    if t is not ntype:  # type: ignore
-        if t is btype:
-            return s.decode(encoding)
-        elif t is utype:  # type: ignore
-            return s.encode(encoding)  # type: ignore
-    return s  # type: ignore
-
-
 def dheader(header: str) -> str:
     result: list[str] = []
     for data, enc in decode_header(header):

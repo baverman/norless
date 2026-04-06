@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, TypedDict, Iterator, NamedTuple
 from ssl import SSLSocket
 from itertools import batched
 
-from .utils import check_cert, nstr
+from .utils import check_cert
 from .maildir import Message
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ class MsgDict(TypedDict):
 def get_field(info: bytes, field: str) -> str:
     bfield = field.encode()
     idx = info.index(bfield + b' ')
-    return nstr(info[idx + len(bfield) :].split()[0].strip(b')'))
+    return info[idx + len(bfield) :].split()[0].strip(b')').decode('latin-1')
 
 
 def get_cert(sock: SSLSocket) -> bytes:
@@ -124,8 +124,8 @@ class ImapBox:
             m = LIST_REGEX.search(item)
             if m:
                 flags, sep, name = m.group('flags', 'sep', 'name')
-                name = nstr(name).strip('"')
-                result.append((nstr(flags), nstr(sep), name))
+                name = name.decode('latin-1').strip('"')
+                result.append((flags.decode('latin-1'), sep.decode('latin-1'), name))
 
         return result
 
@@ -219,7 +219,7 @@ class Folder:
         # broken = []
         for info, body in iter_result(result[1]):
             uid = get_field(info, 'UID')
-            flags = tuple(map(nstr, imaplib.ParseFlags(info)))
+            flags = tuple(flag.decode('latin-1') for flag in imaplib.ParseFlags(info))
             msg = Message(body.replace(b'\r\n', b'\n'))
             # if message_id(msg)[0] != '<':
             #     broken.append(int(uid))
@@ -247,7 +247,7 @@ class Folder:
         for info, msg in iter_result(imap_list):
             r: MsgDict = {
                 'uid': get_field(info, 'UID'),
-                'flags': tuple(map(nstr, imaplib.ParseFlags(info))),
+                'flags': tuple(flag.decode('latin-1') for flag in imaplib.ParseFlags(info)),
                 'body': msg,
             }
             yield r
@@ -258,7 +258,9 @@ class Folder:
         for info in result[1]:
             if not info:
                 continue
-            flags[int(get_field(info, 'UID'))] = tuple(map(nstr, imaplib.ParseFlags(info)))
+            flags[int(get_field(info, 'UID'))] = tuple(
+                flag.decode('latin-1') for flag in imaplib.ParseFlags(info)
+            )
 
         return flags
 
