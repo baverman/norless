@@ -231,22 +231,6 @@ class Folder:
         #     self.box.client.uid('STORE', suids, '+FLAGS', '(\\Deleted)')
         #     self.box.client.expunge()
 
-    def fetch(self, last_n: int, last_uid: int) -> Iterator[MsgDict]:
-        self.select()
-
-        if last_uid:
-            new_uids_result = self.box.client.uid('search', '(UID {}:*)'.format(last_uid + 1))
-            uids: list[int] = [int(r) for r in new_uids_result[1][0].split() if int(r) > last_uid]
-            yield from self.fetch_uids(uids)
-        else:
-            if not self.total:
-                return
-
-            start, end = max(self.total - last_n, 1), self.total
-            result = self.box.client.fetch('{}:{}'.format(start, end), '(UID FLAGS BODY.PEEK[])')
-
-            yield from self._iter_fetch(result[1])
-
     def fetch_uids(self, uids: list[int]) -> Iterator[MsgDict]:
         if not uids:
             return
@@ -318,7 +302,7 @@ class Folder:
 
         return stored_messages
 
-    def unseen_uids(self) -> list[int]:
+    def uids_since(self, last_uid: int) -> list[int]:
         self.select()
-        resp = self.box.client.uid('search', 'UNSEEN')
-        return [int(r) for r in resp[1][0].split()]
+        resp = self.box.client.uid('search', f'(UID {last_uid + 1}:*)')
+        return [int(r) for r in resp[1][0].split() if int(r) > last_uid]

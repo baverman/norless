@@ -80,11 +80,12 @@ class NorlessConfig:
         maildir: str | None = None,
         one_thread: bool = False,
         quiet: bool = False,
+        debug: bool = False,
     ) -> None:
         self.raw = load_toml(fname)
         self.state_dir = os.path.expanduser(self.raw.state_dir)
         self.timeout = self.raw.timeout
-        self.debug = self.raw.debug
+        self.debug = self.raw.debug or debug
         self.one_thread = one_thread
         self.quiet = quiet
         self.app_lock = FileLock(os.path.join(self.state_dir, '.norless-lock'))
@@ -120,7 +121,7 @@ class NorlessConfig:
                 True,
                 None,
                 os.path.expanduser(cfg.cafile) if cfg.cafile else None,
-                int(self.debug),
+                self.debug and 9 or 0,
                 xoauth2,
             )
             box.name = cfg.name

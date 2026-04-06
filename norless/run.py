@@ -117,14 +117,14 @@ def sync_account_box(config: NorlessConfig, s: Sync) -> None:
             f'remote={folder.uidvalidity}, local={local_uidvalidity}'
         )
 
-    unseen_uids = folder.unseen_uids()
+    new_uids = folder.uids_since(state.max_uid(s.account, s.folder))
 
-    if unseen_uids:
+    if new_uids:
         to_seen = []
         to_fetch = []
         mark_as_seen = s.maildir.mark_as_seen
 
-        for rinfo in folder.info(unseen_uids):
+        for rinfo in folder.info(new_uids):
             linfo = state.by_uid(s.account, s.folder, rinfo.uid)
             if linfo is None:
                 to_fetch.append(rinfo.uid)
@@ -298,6 +298,14 @@ commands to get certificates:
         help='run actions sequentially in one thread',
     )
 
+    parser.add_argument(
+        '-d',
+        '--debug',
+        dest='debug',
+        action='store_true',
+        help='enable debug logging',
+    )
+
     parser.add_argument('-q', '--quiet', dest='quiet', action='store_true', help='silent run')
 
     args = parser.parse_args()
@@ -308,12 +316,13 @@ commands to get certificates:
         maildir=args.maildir,
         one_thread=args.one_thread,
         quiet=args.quiet,
+        debug=args.debug,
     )
 
     if config.timeout:
         socket.setdefaulttimeout(config.timeout)
 
-    logging.basicConfig(level='ERROR')
+    logging.basicConfig(level='DEBUG' if config.debug else 'ERROR')
 
     for cmd in ACTIONS:
         if cmd in args.actions:

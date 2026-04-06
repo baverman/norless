@@ -108,6 +108,16 @@ class SqliteState:
             return MessageInfo(*rows[0])
         return None
 
+    def max_uid(self, account: str, folder: str) -> int:
+        params = account, folder
+        rows = self.conn.execute(
+            'SELECT MAX(uid) FROM messages WHERE account=? AND folder=?',
+            params,
+        ).fetchall()
+        if rows and rows[0][0] is not None:
+            return int(rows[0][0])
+        return 0
+
     def by_msgid(self, account: str, folder: str, msgid: str) -> list[MessageInfo]:
         params = account, folder, msgid
         result = self.conn.execute(
