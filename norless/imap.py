@@ -1,24 +1,21 @@
 from __future__ import annotations
-import re
-import time
-import imaplib
+
+import socket
 import ssl
 
-from hashlib import sha1
 from functools import cached_property
-from typing import TYPE_CHECKING, TypedDict, Iterator, NamedTuple
-from ssl import SSLSocket
+from hashlib import sha1
 from itertools import batched
+from ssl import SSLSocket
+from typing import TYPE_CHECKING, Iterator, NamedTuple, TypedDict
 
-from .utils import check_cert
+from .imap_client import Client
+from .imap_client import Select as ImapSelect
 from .maildir import Message
+from .utils import check_cert
 
 if TYPE_CHECKING:
     from .config import XOauth2Holder
-
-LIST_REGEX = re.compile(rb'\((?P<flags>.*?)\) "(?P<sep>.*)" (?P<name>.*)')
-
-ImapList = list[None] | list[bytes | tuple[bytes, bytes]]
 
 
 class Info(NamedTuple):
@@ -40,23 +37,18 @@ class MsgDict(TypedDict):
     body: bytes
 
 
-def get_field(info: bytes, field: str) -> str:
-    bfield = field.encode()
-    idx = info.index(bfield + b' ')
-    return info[idx + len(bfield) :].split()[0].strip(b')').decode('latin-1')
-
-
 def get_cert(sock: SSLSocket) -> bytes:
     result = sock.getpeercert(True)
     assert result
     return result
 
 
-def xoauth2_login(client: imaplib.IMAP4, username: str, xoauth2: XOauth2Holder) -> None:
-    def xoauth(data: bytes) -> bytes:
-        return 'user={}\x01auth=Bearer {}\x01\x01'.format(username, xoauth2.get_token()).encode()
-
-    client.authenticate('XOAUTH2', xoauth)
+def message_id(msg: Message) -> str:
+    msg_id = msg.get('message-id')
+    if not msg_id:
+        hsh = sha1(f'{msg["date"]}:{msg["from"]}:{msg["to"]}:{msg["subject"]}'.encode()).hexdigest()
+        msg_id = f'<{hsh}@generated-missing>'
+    return msg_id
 
 
 class ImapBox:
@@ -84,83 +76,66 @@ class ImapBox:
         self.fingerprint = fingerprint
         self.cafile = cafile
         self.debug = debug
+        self.xoauth2 = xoauth2
 
         self.selected_folder = None
-        self.xoauth2 = xoauth2
+        self._selected: ImapSelect | None = None
 
     def get_fingerprint(self, cert: bytes) -> str:
         s = sha1(cert).hexdigest().upper()
         return ':'.join(s[i : i + 2] for i in range(0, len(s), 2))
 
     @cached_property
-    def client(self) -> imaplib.IMAP4:
-        C = imaplib.IMAP4_SSL if self.ssl else imaplib.IMAP4
-        cl = C(self.host, self.port)
-
+    def client(self) -> Client:
+        sock = socket.create_connection((self.host, self.port))
         if self.ssl:
+            ctx = ssl.create_default_context()
+            wrapped = ctx.wrap_socket(sock, server_hostname=self.host)
             if self.fingerprint:
-                server_fingerprint = self.get_fingerprint(get_cert(cl.sock))  # type: ignore[arg-type]
+                server_fingerprint = self.get_fingerprint(get_cert(wrapped))
                 if server_fingerprint != self.fingerprint:
                     raise Exception(
-                        'Mismatched fingerprint for {} {}'.format(self.host, server_fingerprint)
+                        f'Mismatched fingerprint for {self.host} {server_fingerprint}'
                     )
             elif self.cafile:
-                cert = ssl.DER_cert_to_PEM_cert(get_cert(cl.sock))  # type: ignore[arg-type]
+                cert = ssl.DER_cert_to_PEM_cert(get_cert(wrapped))
                 check_cert(cert.encode(), self.cafile)
+            sock = wrapped
 
-        if self.debug:
-            cl.debug = self.debug
-
+        client = Client(sock)
         if self.xoauth2:
-            xoauth2_login(cl, self.username, self.xoauth2)
+            xo = 'user={}\x01auth=Bearer {}\x01\x01'.format(
+                self.username, self.xoauth2.get_token()
+            ).encode()
+            client.authenticate('XOAUTH2', xo)
         else:
-            cl.login(self.username, self.password)
-        return cl
+            client.login(self.username.encode(), self.password.encode())
+        return client
 
     def list_folders(self) -> list[tuple[str, str, str]]:
         result: list[tuple[str, str, str]] = []
-        resp: tuple[str, list[bytes]] = self.client.list()  # type: ignore[assignment]
-        for item in resp[1]:
-            m = LIST_REGEX.search(item)
-            if m:
-                flags, sep, name = m.group('flags', 'sep', 'name')
-                name = name.decode('latin-1').strip('"')
-                result.append((flags.decode('latin-1'), sep.decode('latin-1'), name))
-
+        for flags, sep, name in self.client.list_folders():
+            result.append(
+                (
+                    ' '.join(flag.decode('latin-1') for flag in flags),
+                    sep.decode('latin-1'),
+                    name.decode('latin-1'),
+                )
+            )
         return result
 
     def get_folder(self, name: str) -> Folder:
         return Folder(self, name)
 
     def get_status(self, folder: str) -> Status:
-        result = self.client.status(self.client._quote(folder), '(MESSAGES UNSEEN UIDVALIDITY)')
-        messages = int(get_field(result[1][0], 'MESSAGES'))
-        unseen = int(get_field(result[1][0], 'UNSEEN'))
-        uidvalidity = int(get_field(result[1][0], 'UIDVALIDITY'))
-        return Status(messages, unseen, uidvalidity)
+        self.select(folder)
+        assert self._selected is not None
+        return Status(self._selected.exists, self._selected.unseen or 0, self._selected.uidvalidity)
 
     def select(self, name: str) -> None:
         if name != self.selected_folder:
-            self.client.select(self.client._quote(name))
+            self._selected = self.client.select(name.encode())
             self.selected_folder = name
-
-
-def message_id(msg: Message) -> str:
-    msg_id = msg.get('message-id')
-    if not msg_id:
-        hsh = sha1(f'{msg["date"]}:{msg["from"]}:{msg["to"]}:{msg["subject"]}'.encode()).hexdigest()
-        msg_id = f'<{hsh}@generated-missing>'
-    return msg_id
-
-
-def iter_result(imap_list: ImapList) -> Iterator[tuple[bytes, bytes]]:
-    if imap_list and imap_list[0] is None:
-        return
-
-    it: Iterator[tuple[bytes, bytes]] = iter(imap_list)  # type: ignore[arg-type]
-    for info, body in it:
-        yield info, body
-        next(it)
 
 
 class Folder:
@@ -188,123 +163,56 @@ class Folder:
         self.box.select(self.name)
 
     def trash(self, uids: list[int], trash_folder: str) -> None:
-        suids = ','.join(map(str, uids))
-        self.select()
-        self.box.client.uid('COPY', suids, trash_folder)
-        self.box.client.uid('STORE', suids, '+FLAGS', '(\\Deleted)')
-        self.box.client.expunge()
+        raise NotImplementedError('trash is not implemented in imap2 yet')
 
     def delete(self, uids: list[int]) -> None:
         self.select()
-        suids = ','.join(map(str, uids))
-        self.box.client.uid('STORE', suids, '+FLAGS', '(\\Deleted)')
+        self.box.client.store(','.join(map(str, uids)).encode(), b'+FLAGS', b'(\\Deleted)', uid=True)
 
     def seen(self, uids: list[int]) -> None:
-        suids = ','.join(map(str, uids))
         self.select()
-        self.box.client.uid('STORE', suids, '+FLAGS', '(\\Seen)')
+        self.box.client.store(','.join(map(str, uids)).encode(), b'+FLAGS', b'(\\Seen)', uid=True)
 
     def info(self, uids: list[int] | None = None, recent: int | None = None) -> Iterator[Info]:
         self.select()
-        request = '(UID FLAGS BODY.PEEK[HEADER.FIELDS (MESSAGE-ID DATE FROM TO SUBJECT)])'
+        request = b'(UID FLAGS BODY.PEEK[HEADER.FIELDS (MESSAGE-ID DATE FROM TO SUBJECT)])'
 
         if uids is not None:
-            result = self.box.client.uid('fetch', ','.join(map(str, uids)), request)
+            result = self.box.client.fetch(','.join(map(str, uids)).encode(), request, uid=True)
         elif recent is not None:
             start, end = max(self.total - recent, 1), self.total
-            result = self.box.client.fetch(f'{start}:{end}', request)
+            result = self.box.client.fetch(f'{start}:{end}'.encode(), request)
         else:
-            result = self.box.client.fetch('1:*', request)
+            result = self.box.client.fetch(b'1:*', request)
 
-        # broken = []
-        for info, body in iter_result(result[1]):
-            uid = get_field(info, 'UID')
-            flags = tuple(flag.decode('latin-1') for flag in imaplib.ParseFlags(info))
-            msg = Message(body.replace(b'\r\n', b'\n'))
-            # if message_id(msg)[0] != '<':
-            #     broken.append(int(uid))
-            yield Info(int(uid), message_id(msg), flags, msg)
-
-        # if broken:
-        #     print('  Cleanup:', len(broken))
-        #     suids = ','.join(map(str, broken))
-        #     self.box.client.uid('STORE', suids, '+FLAGS', '(\\Deleted)')
-        #     self.box.client.expunge()
+        for item in result:
+            uid = int(item['UID'])  # type: ignore[arg-type]
+            flags = tuple(flag.decode('latin-1') for flag in item['FLAGS'])  # type: ignore[union-attr]
+            msg = Message(item['BODY'].replace(b'\r\n', b'\n'))  # type: ignore[union-attr]
+            yield Info(uid, message_id(msg), flags, msg)
 
     def fetch_uids(self, uids: list[int]) -> Iterator[MsgDict]:
         if not uids:
             return
 
         self.select()
-
         for batch in batched(uids, 100):
-            result = self.box.client.uid(
-                'fetch', ','.join(map(str, batch)), '(UID FLAGS BODY.PEEK[])'
+            result = self.box.client.fetch(
+                ','.join(map(str, batch)).encode(), b'(UID FLAGS BODY.PEEK[])', uid=True
             )
-            yield from self._iter_fetch(result[1])
-
-    def _iter_fetch(self, imap_list: ImapList) -> Iterator[MsgDict]:
-        for info, msg in iter_result(imap_list):
-            r: MsgDict = {
-                'uid': get_field(info, 'UID'),
-                'flags': tuple(flag.decode('latin-1') for flag in imaplib.ParseFlags(info)),
-                'body': msg,
-            }
-            yield r
+            for item in result:
+                yield {
+                    'uid': item['UID'].decode('latin-1'),  # type: ignore[union-attr]
+                    'flags': tuple(flag.decode('latin-1') for flag in item['FLAGS']),  # type: ignore[union-attr]
+                    'body': item['BODY'],  # type: ignore[typeddict-item]
+                }
 
     def get_flags(self, uids: list[int]) -> dict[int, tuple[str, ...]]:
-        result = self.box.client.uid('fetch', ','.join(map(str, uids)), '(UID FLAGS)')
-        flags = {}
-        for info in result[1]:
-            if not info:
-                continue
-            flags[int(get_field(info, 'UID'))] = tuple(
-                flag.decode('latin-1') for flag in imaplib.ParseFlags(info)
-            )
-
-        return flags
+        raise NotImplementedError('get_flags is not implemented in imap2 yet')
 
     def append_messages(self, messages: list[Message], last_uid: int) -> list[tuple[int, str]]:
-        self.select()
-        for msg in messages:
-            del msg['X-Norless-Id']
-            msg['X-Norless-Id'] = msg.msgkey
-
-            del msg['Message-ID']
-            msg['Message-ID'] = msg.msgkey
-
-            self.box.client.append(
-                self.box.client._quote(self.name),
-                '(\\Seen)',
-                time.time(),  # type: ignore[arg-type]
-                msg.as_bytes(),
-            )
-
-        result = self.box.client.uid('search', '(UID {}:*)'.format(last_uid + 1))
-
-        uids: list[bytes] = [r for r in result[1][0].split() if int(r) > last_uid]
-        stored_messages = []
-        if uids:
-            result = self.box.client.uid(
-                'fetch', b','.join(uids).decode(), '(UID BODY.PEEK[HEADER])'
-            )
-
-            it = iter(result[1])
-            for info, body in it:
-                uid = get_field(info, 'UID')
-                smsg = Message(body.replace(b'\r\n', b'\n'))
-
-                if 'X-Norless-Id' in smsg:
-                    stored_messages.append((int(uid), smsg['X-Norless-Id'].strip()))
-
-                if 'Message-ID' in smsg:
-                    stored_messages.append((int(uid), smsg['Message-ID'].strip()))
-
-                next(it)
-
-        return stored_messages
+        raise NotImplementedError('append_messages is not implemented in imap2 yet')
 
     def uids_since(self, last_uid: int) -> list[int]:
         self.select()
-        resp = self.box.client.uid('search', f'(UID {last_uid + 1}:*)')
-        return [int(r) for r in resp[1][0].split() if int(r) > last_uid]
+        return [uid for uid in self.box.client.search(f'(UID {last_uid + 1}:*)'.encode(), uid=True) if uid > last_uid]
